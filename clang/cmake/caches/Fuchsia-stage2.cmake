@@ -294,9 +294,9 @@ set(LLVM_INSTALL_TOOLCHAIN_ONLY ON CACHE BOOL "")
 set(LLVM_TOOLCHAIN_TOOLS
   dsymutil
   llvm-ar
-  llvm-bolt
   llvm-cov
   llvm-cxxfilt
+  llvm-debuginfod
   llvm-debuginfod-find
   llvm-dlltool
   ${LLVM_DRIVER_TARGET}
@@ -329,6 +329,7 @@ set(LLVM_TOOLCHAIN_TOOLS
   CACHE STRING "")
 
 set(LLVM_Toolchain_DISTRIBUTION_COMPONENTS
+  bolt
   clang
   lld
   clang-apply-replacements

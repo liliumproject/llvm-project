@@ -121,6 +121,12 @@ New checks
   Detect implicit and explicit casts of ``enum`` type into ``bool`` where ``enum`` type
   doesn't have a zero-value enumerator.
 
+- New :doc:`bugprone-unique-ptr-array-mismatch
+  <clang-tidy/checks/bugprone/unique-ptr-array-mismatch>` check.
+
+  Finds initializations of C++ unique pointers to non-array type that are
+  initialized with an array.
+
 - New :doc:`bugprone-unsafe-functions
   <clang-tidy/checks/bugprone/unsafe-functions>` check.
 
@@ -201,6 +207,12 @@ New check aliases
 
 Changes in existing checks
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+- Fixed false-positives in :doc:`bugprone-branch-clone
+  <clang-tidy/checks/bugprone/branch-clone>` check by ignoring auto-generated
+  code, template instances, implicit code patterns and duplicated switch cases
+  marked with the ``[[fallthrough]]`` attribute.
+
 - Improved :doc:`readability-redundant-string-cstr
   <clang-tidy/checks/readability/redundant-string-cstr>` check to recognise
   unnecessary ``std::string::c_str()`` and ``std::string::data()`` calls in
@@ -241,6 +253,10 @@ Changes in existing checks
   <clang-tidy/checks/bugprone/use-after-move>` check. Detect uses and moves in
   constructor initializers. Correctly handle constructor arguments as being
   sequenced when constructor call is written as list-initialization.
+
+- Extend :doc:`bugprone-unused-return-value
+  <clang-tidy/checks/bugprone/unused-return-value>` check to check for all functions
+  with specified return types using the ``CheckedReturnTypes`` option.
 
 - Deprecated :doc:`cert-dcl21-cpp
   <clang-tidy/checks/cert/dcl21-cpp>` check.
@@ -380,6 +396,14 @@ Changes in existing checks
 - Fixed a false positive in :doc:`performance-no-automatic-move
   <clang-tidy/checks/performance/no-automatic-move>` when warning would be
   emitted for a const local variable to which NRVO is applied.
+
+- Improved :doc:`performance-no-automatic-move
+  <clang-tidy/checks/performance/no-automatic-move>`: warn on ``const &&``
+  constructors.
+
+- Fixed :doc:`bugprone-exception-escape<clang-tidy/checks/bugprone/exception-escape>`
+  for coroutines where previously a warning would be emitted with coroutines
+  throwing exceptions in their bodies.
 
 Removed checks
 ^^^^^^^^^^^^^^

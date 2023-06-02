@@ -174,22 +174,38 @@ void llvm::computeLTOCacheKey(
   // imported symbols for each module may affect code generation and is
   // sensitive to link order, so include that as well.
   using ImportMapIteratorTy = FunctionImporter::ImportMapTy::const_iterator;
-  std::vector<ImportMapIteratorTy> ImportModulesVector;
+  struct ImportModule {
+    ImportMapIteratorTy ModIt;
+    const ModuleSummaryIndex::ModuleInfo *ModInfo;
+
+    StringRef getIdentifier() const { return ModIt->getKey(); }
+    const FunctionImporter::FunctionsToImportTy &getFunctions() const {
+      return ModIt->second;
+    }
+
+    const ModuleHash &getHash() const { return ModInfo->second.second; }
+    uint64_t getId() const { return ModInfo->second.first; }
+  };
+
+  std::vector<ImportModule> ImportModulesVector;
   ImportModulesVector.reserve(ImportList.size());
 
   for (ImportMapIteratorTy It = ImportList.begin(); It != ImportList.end();
        ++It) {
-    ImportModulesVector.push_back(It);
+    ImportModulesVector.push_back({It, Index.getModule(It->getKey())});
   }
+  // Order using moduleId integer which is based on the order the module was
+  // added.
   llvm::sort(ImportModulesVector,
-             [](const ImportMapIteratorTy &Lhs, const ImportMapIteratorTy &Rhs)
-                 -> bool { return Lhs->getKey() < Rhs->getKey(); });
-  for (const ImportMapIteratorTy &EntryIt : ImportModulesVector) {
-    auto ModHash = Index.getModuleHash(EntryIt->first());
+             [](const ImportModule &Lhs, const ImportModule &Rhs) -> bool {
+               return Lhs.getId() < Rhs.getId();
+             });
+  for (const ImportModule &Entry : ImportModulesVector) {
+    auto ModHash = Entry.getHash();
     Hasher.update(ArrayRef<uint8_t>((uint8_t *)&ModHash[0], sizeof(ModHash)));
 
-    AddUint64(EntryIt->second.size());
-    for (auto &Fn : EntryIt->second)
+    AddUint64(Entry.getFunctions().size());
+    for (auto &Fn : Entry.getFunctions())
       AddUint64(Fn);
   }
 
@@ -259,9 +275,10 @@ void llvm::computeLTOCacheKey(
 
   // Imported functions may introduce new uses of type identifier resolutions,
   // so we need to collect their used resolutions as well.
-  for (auto &ImpM : ImportList)
-    for (auto &ImpF : ImpM.second) {
-      GlobalValueSummary *S = Index.findSummaryInModule(ImpF, ImpM.first());
+  for (const ImportModule &ImpM : ImportModulesVector)
+    for (auto &ImpF : ImpM.getFunctions()) {
+      GlobalValueSummary *S =
+          Index.findSummaryInModule(ImpF, ImpM.getIdentifier());
       AddUsedThings(S);
       // If this is an alias, we also care about any types/etc. that the aliasee
       // may reference.
@@ -429,39 +446,52 @@ void llvm::thinLTOResolvePrevailingInIndex(
                                  recordNewLinkage, GUIDPreservedSymbols);
 }
 
-static bool isWeakObjectWithRWAccess(GlobalValueSummary *GVS) {
-  if (auto *VarSummary = dyn_cast<GlobalVarSummary>(GVS->getBaseObject()))
-    return !VarSummary->maybeReadOnly() && !VarSummary->maybeWriteOnly() &&
-           (VarSummary->linkage() == GlobalValue::WeakODRLinkage ||
-            VarSummary->linkage() == GlobalValue::LinkOnceODRLinkage);
-  return false;
-}
-
 static void thinLTOInternalizeAndPromoteGUID(
     ValueInfo VI, function_ref<bool(StringRef, ValueInfo)> isExported,
     function_ref<bool(GlobalValue::GUID, const GlobalValueSummary *)>
         isPrevailing) {
   for (auto &S : VI.getSummaryList()) {
+    // First see if we need to promote an internal value because it is not
+    // exported.
     if (isExported(S->modulePath(), VI)) {
       if (GlobalValue::isLocalLinkage(S->linkage()))
         S->setLinkage(GlobalValue::ExternalLinkage);
-    } else if (EnableLTOInternalization &&
-               // Ignore local and appending linkage values since the linker
-               // doesn't resolve them.
-               !GlobalValue::isLocalLinkage(S->linkage()) &&
-               (!GlobalValue::isInterposableLinkage(S->linkage()) ||
-                isPrevailing(VI.getGUID(), S.get())) &&
-               S->linkage() != GlobalValue::AppendingLinkage &&
-               // We can't internalize available_externally globals because this
-               // can break function pointer equality.
-               S->linkage() != GlobalValue::AvailableExternallyLinkage &&
-               // Functions and read-only variables with linkonce_odr and
-               // weak_odr linkage can be internalized. We can't internalize
-               // linkonce_odr and weak_odr variables which are both modified
-               // and read somewhere in the program because reads and writes
-               // will become inconsistent.
-               !isWeakObjectWithRWAccess(S.get()))
-      S->setLinkage(GlobalValue::InternalLinkage);
+      continue;
+    }
+
+    // Otherwise, see if we can internalize.
+    if (!EnableLTOInternalization)
+      continue;
+
+    // Ignore local and appending linkage values since the linker
+    // doesn't resolve them (and there is no need to internalize if this is
+    // already internal).
+    if (GlobalValue::isLocalLinkage(S->linkage()) ||
+        S->linkage() == GlobalValue::AppendingLinkage)
+      continue;
+
+    // We can't internalize available_externally globals because this
+    // can break function pointer equality.
+    if (S->linkage() == GlobalValue::AvailableExternallyLinkage)
+      continue;
+
+    bool IsPrevailing = isPrevailing(VI.getGUID(), S.get());
+
+    if (GlobalValue::isInterposableLinkage(S->linkage()) && !IsPrevailing)
+      continue;
+
+    // Functions and read-only variables with linkonce_odr and weak_odr linkage
+    // can be internalized. We can't internalize linkonce_odr and weak_odr
+    // variables which are both modified and read somewhere in the program
+    // because reads and writes will become inconsistent.
+    auto *VarSummary = dyn_cast<GlobalVarSummary>(S->getBaseObject());
+    if (VarSummary && !VarSummary->maybeReadOnly() &&
+        !VarSummary->maybeWriteOnly() &&
+        (VarSummary->linkage() == GlobalValue::WeakODRLinkage ||
+         VarSummary->linkage() == GlobalValue::LinkOnceODRLinkage))
+      continue;
+
+    S->setLinkage(GlobalValue::InternalLinkage);
   }
 }
 

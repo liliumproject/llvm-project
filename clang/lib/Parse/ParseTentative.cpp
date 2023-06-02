@@ -723,6 +723,9 @@ Parser::isCXX11AttributeSpecifier(bool Disambiguate,
   if (Tok.is(tok::kw_alignas))
     return CAK_AttributeSpecifier;
 
+  if (Tok.isRegularKeywordAttribute())
+    return CAK_AttributeSpecifier;
+
   if (Tok.isNot(tok::l_square) || NextToken().isNot(tok::l_square))
     return CAK_NotAttributeSpecifier;
 
@@ -862,7 +865,8 @@ Parser::isCXX11AttributeSpecifier(bool Disambiguate,
 
 bool Parser::TrySkipAttributes() {
   while (Tok.isOneOf(tok::l_square, tok::kw___attribute, tok::kw___declspec,
-                     tok::kw_alignas)) {
+                     tok::kw_alignas) ||
+         Tok.isRegularKeywordAttribute()) {
     if (Tok.is(tok::l_square)) {
       ConsumeBracket();
       if (Tok.isNot(tok::l_square))
@@ -873,6 +877,8 @@ bool Parser::TrySkipAttributes() {
       // Note that explicitly checking for `[[` and `]]` allows to fail as
       // expected in the case of the Objective-C message send syntax.
       ConsumeBracket();
+    } else if (Tok.isRegularKeywordAttribute()) {
+      ConsumeToken();
     } else {
       ConsumeToken();
       if (Tok.isNot(tok::l_paren))
@@ -2030,6 +2036,7 @@ Parser::TPResult Parser::TryParseParameterDeclarationClause(
       return TPR;
 
     bool SeenType = false;
+    bool DeclarationSpecifierIsAuto = Tok.is(tok::kw_auto);
     do {
       SeenType |= isCXXDeclarationSpecifierAType();
       if (TryConsumeDeclarationSpecifier() == TPResult::Error)
@@ -2051,10 +2058,11 @@ Parser::TPResult Parser::TryParseParameterDeclarationClause(
 
     // declarator
     // abstract-declarator[opt]
-    TPR = TryParseDeclarator(/*mayBeAbstract=*/true,
-                             /*mayHaveIdentifier=*/true,
-                             /*mayHaveDirectInit=*/false,
-                             /*mayHaveTrailingReturnType=*/true);
+    TPR = TryParseDeclarator(
+        /*mayBeAbstract=*/true,
+        /*mayHaveIdentifier=*/true,
+        /*mayHaveDirectInit=*/false,
+        /*mayHaveTrailingReturnType=*/DeclarationSpecifierIsAuto);
     if (TPR != TPResult::Ambiguous)
       return TPR;
 
@@ -2163,11 +2171,41 @@ Parser::TryParseFunctionDeclarator(bool MayHaveTrailingReturnType) {
     if (TPR == TPResult::True)
       return TPR;
     ConsumeToken();
+    if (Tok.is(tok::identifier) && NameAfterArrowIsNonType()) {
+      return TPResult::False;
+    }
     if (isCXXTypeId(TentativeCXXTypeIdContext::TypeIdInTrailingReturnType))
       return TPResult::True;
   }
 
   return TPResult::Ambiguous;
+}
+
+// When parsing an identifier after an arrow it may be a member expression,
+// in which case we should not annotate it as an independant expression
+// so we just lookup that name, if it's not a type the construct is not
+// a function declaration.
+bool Parser::NameAfterArrowIsNonType() {
+  assert(Tok.is(tok::identifier));
+  Token Next = NextToken();
+  if (Next.is(tok::coloncolon))
+    return false;
+  IdentifierInfo *Name = Tok.getIdentifierInfo();
+  SourceLocation NameLoc = Tok.getLocation();
+  CXXScopeSpec SS;
+  TentativeParseCCC CCC(Next);
+  Sema::NameClassification Classification =
+      Actions.ClassifyName(getCurScope(), SS, Name, NameLoc, Next, &CCC);
+  switch (Classification.getKind()) {
+  case Sema::NC_OverloadSet:
+  case Sema::NC_NonType:
+  case Sema::NC_VarTemplate:
+  case Sema::NC_FunctionTemplate:
+    return true;
+  default:
+    break;
+  }
+  return false;
 }
 
 /// '[' constant-expression[opt] ']'
