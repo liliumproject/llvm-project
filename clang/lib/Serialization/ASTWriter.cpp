@@ -2879,10 +2879,9 @@ void ASTWriter::WriteSubmodules(Module *WritingModule) {
 
     // Emit the top headers.
     {
-      auto TopHeaders = Mod->getTopHeaders(PP->getFileManager());
       RecordData::value_type Record[] = {SUBMODULE_TOPHEADER};
-      for (auto *H : TopHeaders) {
-        SmallString<128> HeaderName(H->getName());
+      for (FileEntryRef H : Mod->getTopHeaders(PP->getFileManager())) {
+        SmallString<128> HeaderName(H.getName());
         PreparePathForOutput(HeaderName);
         Stream.EmitRecordWithBlob(TopHeaderAbbrev, Record, HeaderName);
       }
@@ -2998,20 +2997,41 @@ void ASTWriter::WritePragmaDiagnosticMappings(const DiagnosticsEngine &Diag,
     assert(Flags == EncodeDiagStateFlags(State) &&
            "diag state flags vary in single AST file");
 
+    // If we ever serialize non-pragma mappings outside the initial state, the
+    // code below will need to consider more than getDefaultMapping.
+    assert(!IncludeNonPragmaStates ||
+           State == Diag.DiagStatesByLoc.FirstDiagState);
+
     unsigned &DiagStateID = DiagStateIDMap[State];
     Record.push_back(DiagStateID);
 
     if (DiagStateID == 0) {
       DiagStateID = ++CurrID;
+      SmallVector<std::pair<unsigned, DiagnosticMapping>> Mappings;
 
       // Add a placeholder for the number of mappings.
       auto SizeIdx = Record.size();
       Record.emplace_back();
       for (const auto &I : *State) {
-        if (I.second.isPragma() || IncludeNonPragmaStates) {
-          Record.push_back(I.first);
-          Record.push_back(I.second.serialize());
-        }
+        // Maybe skip non-pragmas.
+        if (!I.second.isPragma() && !IncludeNonPragmaStates)
+          continue;
+        // Skip default mappings. We have a mapping for every diagnostic ever
+        // emitted, regardless of whether it was customized.
+        if (!I.second.isPragma() &&
+            I.second == DiagnosticIDs::getDefaultMapping(I.first))
+          continue;
+        Mappings.push_back(I);
+      }
+
+      // Sort by diag::kind for deterministic output.
+      llvm::sort(Mappings, [](const auto &LHS, const auto &RHS) {
+        return LHS.first < RHS.first;
+      });
+
+      for (const auto &I : Mappings) {
+        Record.push_back(I.first);
+        Record.push_back(I.second.serialize());
       }
       // Update the placeholder.
       Record[SizeIdx] = (Record.size() - SizeIdx) / 2;
@@ -3178,6 +3198,13 @@ void ASTWriter::WriteComments() {
   auto _ = llvm::make_scope_exit([this] { Stream.ExitBlock(); });
   if (!PP->getPreprocessorOpts().WriteCommentListToPCH)
     return;
+
+  // Don't write comments to BMI to reduce the size of BMI.
+  // If language services (e.g., clangd) want such abilities,
+  // we can offer a special option then.
+  if (isWritingStdCXXNamedModules())
+    return;
+
   RecordData Record;
   for (const auto &FO : Context->Comments.OrderedComments) {
     for (const auto &OC : FO.second) {
@@ -7147,6 +7174,19 @@ void OMPClauseWriter::VisitOMPXDynCGroupMemClause(OMPXDynCGroupMemClause *C) {
   VisitOMPClauseWithPreInit(C);
   Record.AddStmt(C->getSize());
   Record.AddSourceLocation(C->getLParenLoc());
+}
+
+void OMPClauseWriter::VisitOMPDoacrossClause(OMPDoacrossClause *C) {
+  Record.push_back(C->varlist_size());
+  Record.push_back(C->getNumLoops());
+  Record.AddSourceLocation(C->getLParenLoc());
+  Record.push_back(C->getDependenceType());
+  Record.AddSourceLocation(C->getDependenceLoc());
+  Record.AddSourceLocation(C->getColonLoc());
+  for (auto *VE : C->varlists())
+    Record.AddStmt(VE);
+  for (unsigned I = 0, E = C->getNumLoops(); I < E; ++I)
+    Record.AddStmt(C->getLoopData(I));
 }
 
 void ASTRecordWriter::writeOMPTraitInfo(const OMPTraitInfo *TI) {

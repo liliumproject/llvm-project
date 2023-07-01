@@ -103,6 +103,7 @@ void mlir::printDynamicIndexList(OpAsmPrinter &printer, Operation *op,
                                  OperandRange values,
                                  ArrayRef<int64_t> integers,
                                  TypeRange valueTypes,
+                                 BoolAttr isTrailingIdxScalable,
                                  AsmParser::Delimiter delimiter) {
   char leftDelimiter = getLeftDelimiter(delimiter);
   char rightDelimiter = getRightDelimiter(delimiter);
@@ -111,6 +112,14 @@ void mlir::printDynamicIndexList(OpAsmPrinter &printer, Operation *op,
     printer << rightDelimiter;
     return;
   }
+
+  int64_t trailingScalableInteger;
+  if (isTrailingIdxScalable && isTrailingIdxScalable.getValue()) {
+    // ATM only the trailing idx can be scalable
+    trailingScalableInteger = integers.back();
+    integers = integers.drop_back();
+  }
+
   unsigned idx = 0;
   llvm::interleaveComma(integers, printer, [&](int64_t integer) {
     if (ShapedType::isDynamic(integer)) {
@@ -122,6 +131,16 @@ void mlir::printDynamicIndexList(OpAsmPrinter &printer, Operation *op,
       printer << integer;
     }
   });
+
+  // Print the trailing scalable index
+  if (isTrailingIdxScalable && isTrailingIdxScalable.getValue()) {
+    if (!integers.empty())
+      printer << ", ";
+    printer << "[";
+    printer << trailingScalableInteger;
+    printer << "]";
+  }
+
   printer << rightDelimiter;
 }
 
@@ -138,10 +157,10 @@ ParseResult mlir::parseDynamicIndexList(
     auto res = parser.parseOptionalOperand(operand);
 
     // If `foundScalable` has already been set to `true` then a non-trailing
-    // tile size was identified as scalable.
+    // index was identified as scalable.
     if (foundScalable) {
       parser.emitError(parser.getNameLoc())
-          << "non-trailing tile size cannot be scalable";
+          << "non-trailing index cannot be scalable";
       return failure();
     }
 

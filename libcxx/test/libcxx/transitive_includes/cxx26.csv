@@ -21,6 +21,7 @@ any typeinfo
 any version
 array compare
 array cstddef
+array cstdint
 array initializer_list
 array limits
 array stdexcept
@@ -191,6 +192,7 @@ experimental/vector vector
 filesystem compare
 filesystem cstddef
 filesystem cstdint
+filesystem cstring
 filesystem ctime
 filesystem iomanip
 filesystem iosfwd
@@ -347,6 +349,7 @@ locale string
 locale version
 map compare
 map cstddef
+map cstdint
 map initializer_list
 map limits
 map new
@@ -397,6 +400,7 @@ new cstddef
 new cstdlib
 new version
 numbers version
+numeric climits
 numeric cmath
 numeric cstddef
 numeric cstdint
@@ -436,6 +440,7 @@ ostream typeinfo
 ostream version
 queue compare
 queue cstddef
+queue cstdint
 queue deque
 queue initializer_list
 queue limits
@@ -498,6 +503,7 @@ semaphore ratio
 semaphore version
 set compare
 set cstddef
+set cstdint
 set initializer_list
 set limits
 set new
@@ -528,10 +534,18 @@ sstream string
 sstream version
 stack compare
 stack cstddef
+stack cstdint
 stack deque
 stack initializer_list
+stack limits
 stack version
 stdexcept iosfwd
+stop_token atomic
+stop_token cstddef
+stop_token cstdint
+stop_token limits
+stop_token thread
+stop_token version
 streambuf cstdint
 streambuf ios
 streambuf iosfwd
@@ -578,6 +592,7 @@ thread cstddef
 thread cstdint
 thread cstdlib
 thread ctime
+thread initializer_list
 thread iosfwd
 thread limits
 thread locale

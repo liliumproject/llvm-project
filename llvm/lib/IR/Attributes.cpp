@@ -23,6 +23,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Config/llvm-config.h"
+#include "llvm/IR/AttributeMask.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Type.h"
@@ -2026,6 +2027,10 @@ static bool checkDenormMode(const Function &Caller, const Function &Callee) {
   if (denormModeCompatible(CallerMode, CalleeMode)) {
     DenormalMode CallerModeF32 = Caller.getDenormalModeF32Raw();
     DenormalMode CalleeModeF32 = Callee.getDenormalModeF32Raw();
+    if (CallerModeF32 == DenormalMode::getInvalid())
+      CallerModeF32 = CallerMode;
+    if (CalleeModeF32 == DenormalMode::getInvalid())
+      CalleeModeF32 = CalleeMode;
     return denormModeCompatible(CallerModeF32, CalleeModeF32);
   }
 

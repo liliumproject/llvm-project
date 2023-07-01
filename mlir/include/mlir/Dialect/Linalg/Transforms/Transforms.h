@@ -148,6 +148,12 @@ struct LinalgPaddingOptions {
     paddingDimensions.assign(pd.begin(), pd.end());
     return *this;
   }
+  /// A list of multiples to which each padding dimension should be padded to.
+  std::optional<SmallVector<int64_t>> padToMultipleOf;
+  LinalgPaddingOptions &setPadToMultipleOf(ArrayRef<int64_t> m) {
+    padToMultipleOf.emplace(m.begin(), m.end());
+    return *this;
+  }
   /// A flag for every operand to mark the PadOp as nofold which enables
   /// packing for statically shaped operands.
   SmallVector<bool> packPaddings;
@@ -293,6 +299,7 @@ LogicalResult promoteSubviewsPrecondition(Operation *op,
 /// Return success if the operation can be vectorized.
 LogicalResult vectorizeOpPrecondition(Operation *op,
                                       ArrayRef<int64_t> inputVectorSizes = {},
+                                      ArrayRef<bool> inputScalableVecDims = {},
                                       bool vectorizeNDExtract = false);
 
 //===----------------------------------------------------------------------===//
@@ -314,10 +321,12 @@ using LinalgLoops = SmallVector<Operation *, 4>;
 /// memref.tensor_store %t, %subview
 /// %0 = bufferization.to_tensor %alloc restrict writable
 ///
-/// In addition to rewriting the IR as shown above, the result of the
-/// bufferization.to_tensor op is returned.
+/// In addition to rewriting the IR as shown above, this function returns the
+/// newly allocated buffer. Furthermore, the result of the
+/// bufferization.to_tensor op is optionally returned via `replacement`.
 Value bufferizeToAllocation(RewriterBase &rewriter, tensor::PadOp padOp,
-                            Attribute memorySpace = {});
+                            Attribute memorySpace = {},
+                            Value *replacement = nullptr);
 
 /// Materialize a buffer allocation for the given tensor value. E.g.:
 ///
@@ -327,8 +336,13 @@ Value bufferizeToAllocation(RewriterBase &rewriter, tensor::PadOp padOp,
 ///
 /// In case `value` is a tensor.pad result, the corresponding overload is used
 /// internally to produce a better bufferization.
+///
+/// In addition to rewriting the IR as shown above, this function returns the
+/// newly allocated buffer. Furthermore, the result of the
+/// bufferization.to_tensor op is optionally returned via `replacement`.
 Value bufferizeToAllocation(RewriterBase &rewriter, Value value,
-                            Attribute memorySpace = {});
+                            Attribute memorySpace = {},
+                            Value *replacement = nullptr);
 
 /// Fuse two `linalg.generic` operations that have a producer-consumer
 /// relationship captured through `fusedOperand`. The method expects
@@ -350,16 +364,18 @@ SmallVector<Value> peelLoop(RewriterBase &rewriter, Operation *op);
 void peelLoops(RewriterBase &rewriter, ArrayRef<scf::ForOp> loops);
 
 /// Pad the iterator dimensions `paddingDimensions` of all `opToPad` operands
-/// to a static bounding box. Use `paddingValues` and `packPaddings` to set
-/// padding value and nofold attribute of the created tensor::PadOps,
-/// respectively. Update `paddedOp` to the cloned operation with statically
-/// shaped `paddingDimensions` and return the extracted dynamically shaped
-/// results. If padding fails, return failure.
+/// to a static bounding box. `padToMultipleOf` indicates that each padding
+/// dimension should be padded to the specified multiple. If the derived padding
+/// sizes should not be rounded up to any multiple, use "1". Use `paddingValues`
+/// and `packPaddings` to set padding value and nofold attribute of the created
+/// tensor::PadOps, respectively. Update `paddedOp` to the cloned operation with
+/// statically shaped `paddingDimensions` and return the extracted dynamically
+/// shaped results. If padding fails, return failure. If `copyBack` is set, the
+/// unpadded result is copied back into the original destination tensor.
 FailureOr<SmallVector<Value>>
 rewriteAsPaddedOp(RewriterBase &rewriter, LinalgOp opToPad,
-                  ArrayRef<int64_t> paddingDimensions,
-                  ArrayRef<Attribute> paddingValues,
-                  ArrayRef<bool> packPaddings, LinalgOp &paddedOp);
+                  const LinalgPaddingOptions &options, LinalgOp &paddedOp,
+                  bool copyBack);
 
 namespace detail {
 
@@ -445,7 +461,7 @@ hoistPaddingOnTensors(tensor::PadOp opToHoist, int64_t numLoops,
 /// specified in `options`.
 FailureOr<LinalgOp> padAndHoistLinalgOp(RewriterBase &rewriter,
                                         LinalgOp linalgOp,
-                                        LinalgPaddingOptions options);
+                                        const LinalgPaddingOptions &options);
 
 /// Split the given `op` into two parts along the given iteration space
 /// `dimension` at the specified `splitPoint`, and return the two parts.
@@ -583,6 +599,7 @@ LogicalResult deallocateGPUPrivateMemory(OpBuilder &, Value /*buffer*/);
 /// dynamic shapes.
 LogicalResult vectorize(RewriterBase &rewriter, Operation *op,
                         ArrayRef<int64_t> inputVectorSizes = {},
+                        ArrayRef<bool> inputScalableVecDims = {},
                         bool vectorizeNDExtract = false);
 
 /// Emit a suitable vector form for a Copy op with fully static shape.
@@ -1037,24 +1054,6 @@ rewriteInIm2Col(RewriterBase &rewriter, linalg::Conv2DNchwFchwOp convOp);
 // functional-stye API call.
 //===----------------------------------------------------------------------===//
 
-///
-/// Linalg padding pattern.
-///
-/// Apply the `padding` transformation as a pattern.
-/// See `padding` for more details.
-struct LinalgPaddingPattern : public OpInterfaceRewritePattern<LinalgOp> {
-  LinalgPaddingPattern(MLIRContext *context,
-                       LinalgPaddingOptions options = LinalgPaddingOptions(),
-                       PatternBenefit benefit = 1);
-
-  LogicalResult matchAndRewrite(LinalgOp op,
-                                PatternRewriter &rewriter) const override;
-
-private:
-  /// Options to control padding and hoisting.
-  LinalgPaddingOptions options;
-};
-
 /// Rewrites 2-D convolution ops with size-1 window dimensions into 1-D
 /// convolution ops.
 template <typename Conv2DOp, typename Conv1DOp>
@@ -1137,15 +1136,6 @@ struct CopyVectorizationPattern : public OpRewritePattern<memref::CopyOp> {
   using OpRewritePattern<memref::CopyOp>::OpRewritePattern;
 
   LogicalResult matchAndRewrite(memref::CopyOp copyOp,
-                                PatternRewriter &rewriter) const override;
-};
-
-/// tensor::PadOp is not canonicalized away yet, so we provide a
-/// transformation to `linalg.generic`.
-struct PadOpTransformationPattern : public OpRewritePattern<tensor::PadOp> {
-  using OpRewritePattern<tensor::PadOp>::OpRewritePattern;
-
-  LogicalResult matchAndRewrite(tensor::PadOp padOp,
                                 PatternRewriter &rewriter) const override;
 };
 

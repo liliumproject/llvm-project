@@ -187,7 +187,7 @@ private:
   /// Track symbols symbols processed during and after the registration
   /// to avoid infinite loops between type conversions and global variable
   /// creation.
-  llvm::SmallSetVector<Fortran::semantics::SymbolRef, 64> seen;
+  llvm::SmallSetVector<Fortran::semantics::SymbolRef, 32> seen;
 };
 
 class DispatchTableConverter {
@@ -612,23 +612,6 @@ public:
           return fir::substBase(hexv, temp);
         });
 
-    // Replace all uses of the original with the clone/copy,
-    // esepcially for loop bounds (that uses the variable being privatised)
-    // since loop bounds use old values that need to be fixed by using the
-    // new copied value.
-    // Not able to use replaceAllUsesWith() because uses outside
-    // the loop body should not use the clone.
-    // FIXME: Call privatization before the loop operation.
-    mlir::Region &curRegion = getFirOpBuilder().getRegion();
-    mlir::Value oldVal = fir::getBase(hexv);
-    mlir::Value cloneVal = fir::getBase(exv);
-    for (auto &oper : curRegion.getOps()) {
-      for (unsigned int ii = 0; ii < oper.getNumOperands(); ++ii) {
-        if (oper.getOperand(ii) == oldVal) {
-          oper.setOperand(ii, cloneVal);
-        }
-      }
-    }
     return bindIfNewSymbol(sym, exv);
   }
 
@@ -733,7 +716,7 @@ public:
               loc = cooked->GetSourcePositionRange(block)) {
         // loc is a pair (begin, end); use the beginning position
         Fortran::parser::SourcePosition &filePos = loc->first;
-        llvm::SmallString<256> filePath(filePos.file.path());
+        llvm::SmallString<256> filePath(*filePos.path);
         llvm::sys::fs::make_absolute(filePath);
         llvm::sys::path::remove_dots(filePath);
         return mlir::FileLineColLoc::get(&getMLIRContext(), filePath.str(),
@@ -2189,6 +2172,8 @@ private:
 
     const Fortran::parser::OpenMPLoopConstruct *ompLoop =
         std::get_if<Fortran::parser::OpenMPLoopConstruct>(&omp.u);
+    const Fortran::parser::OpenMPBlockConstruct *ompBlock =
+        std::get_if<Fortran::parser::OpenMPBlockConstruct>(&omp.u);
 
     // If loop is part of an OpenMP Construct then the OpenMP dialect
     // workshare loop operation has already been created. Only the
@@ -2213,8 +2198,15 @@ private:
     for (Fortran::lower::pft::Evaluation &e : curEval->getNestedEvaluations())
       genFIR(e);
 
-    if (ompLoop)
+    if (ompLoop) {
       genOpenMPReduction(*this, *loopOpClauseList);
+    } else if (ompBlock) {
+      const auto &blockStart =
+          std::get<Fortran::parser::OmpBeginBlockDirective>(ompBlock->t);
+      const auto &blockClauses =
+          std::get<Fortran::parser::OmpClauseList>(blockStart.t);
+      genOpenMPReduction(*this, blockClauses);
+    }
 
     localSymbols.popScope();
     builder->restoreInsertionPoint(insertPt);
@@ -3182,7 +3174,8 @@ private:
       return hlfir::EntityWithAttributes{builder.createConvert(loc, toTy, val)};
     };
     mlir::Value convertedRhs = hlfir::genElementalOp(
-        loc, builder, toTy, shape, /*typeParams=*/{}, genKernel);
+        loc, builder, toTy, shape, /*typeParams=*/{}, genKernel,
+        /*isUnordered=*/true);
     fir::FirOpBuilder *bldr = &builder;
     stmtCtx.attachCleanup([loc, bldr, convertedRhs]() {
       bldr->create<hlfir::DestroyOp>(loc, convertedRhs);
@@ -3206,6 +3199,21 @@ private:
     builder.restoreInsertionPoint(insertPt);
   }
 
+  bool firstDummyIsPointerOrAllocatable(
+      const Fortran::evaluate::ProcedureRef &userDefinedAssignment) {
+    using DummyAttr = Fortran::evaluate::characteristics::DummyDataObject::Attr;
+    if (auto procedure =
+            Fortran::evaluate::characteristics::Procedure::Characterize(
+                userDefinedAssignment.proc(), getFoldingContext()))
+      if (!procedure->dummyArguments.empty())
+        if (const auto *dataArg = std::get_if<
+                Fortran::evaluate::characteristics::DummyDataObject>(
+                &procedure->dummyArguments[0].u))
+          return dataArg->attrs.test(DummyAttr::Pointer) ||
+                 dataArg->attrs.test(DummyAttr::Allocatable);
+    return false;
+  }
+
   void genDataAssignment(
       const Fortran::evaluate::Assignment &assign,
       const Fortran::evaluate::ProcedureRef *userDefinedAssignment) {
@@ -3216,6 +3224,9 @@ private:
     const bool isWholeAllocatableAssignment =
         !userDefinedAssignment && !isInsideHlfirWhere() &&
         Fortran::lower::isWholeAllocatable(assign.lhs);
+    const bool isUserDefAssignToPointerOrAllocatable =
+        userDefinedAssignment &&
+        firstDummyIsPointerOrAllocatable(*userDefinedAssignment);
     std::optional<Fortran::evaluate::DynamicType> lhsType =
         assign.lhs.GetType();
     const bool keepLhsLengthInAllocatableAssignment =
@@ -3250,7 +3261,8 @@ private:
           loc, *this, assign.lhs, localSymbols, stmtCtx);
       // Dereference pointer LHS: the target is being assigned to.
       // Same for allocatables outside of whole allocatable assignments.
-      if (!isWholeAllocatableAssignment)
+      if (!isWholeAllocatableAssignment &&
+          !isUserDefAssignToPointerOrAllocatable)
         lhs = hlfir::derefPointersAndAllocatables(loc, builder, lhs);
       return lhs;
     };
@@ -3280,26 +3292,46 @@ private:
     // Lower LHS in its own region.
     builder.createBlock(&regionAssignOp.getLhsRegion());
     Fortran::lower::StatementContext lhsContext;
+    mlir::Value lhsYield = nullptr;
     if (!lhsHasVectorSubscripts) {
       hlfir::Entity lhs = evaluateLhs(lhsContext);
       auto lhsYieldOp = builder.create<hlfir::YieldOp>(loc, lhs);
       genCleanUpInRegionIfAny(loc, builder, lhsYieldOp.getCleanup(),
                               lhsContext);
+      lhsYield = lhs;
     } else {
       hlfir::ElementalAddrOp elementalAddr =
           Fortran::lower::convertVectorSubscriptedExprToElementalAddr(
               loc, *this, assign.lhs, localSymbols, lhsContext);
       genCleanUpInRegionIfAny(loc, builder, elementalAddr.getCleanup(),
                               lhsContext);
+      lhsYield = elementalAddr.getYieldOp().getEntity();
     }
+    assert(lhsYield && "must have been set");
 
     // Add "realloc" flag to hlfir.region_assign.
     if (isWholeAllocatableAssignment)
       TODO(loc, "assignment to a whole allocatable inside FORALL");
-    // Generate the hlfir.region_assign userDefinedAssignment region.
-    if (userDefinedAssignment)
-      TODO(loc, "HLFIR user defined assignment");
 
+    // Generate the hlfir.region_assign userDefinedAssignment region.
+    if (userDefinedAssignment) {
+      mlir::Type rhsType = rhs.getType();
+      mlir::Type lhsType = lhsYield.getType();
+      if (userDefinedAssignment->IsElemental()) {
+        rhsType = hlfir::getEntityElementType(rhs);
+        lhsType = hlfir::getEntityElementType(hlfir::Entity{lhsYield});
+      }
+      builder.createBlock(&regionAssignOp.getUserDefinedAssignment(),
+                          mlir::Region::iterator{}, {rhsType, lhsType},
+                          {loc, loc});
+      auto end = builder.create<fir::FirEndOp>(loc);
+      builder.setInsertionPoint(end);
+      hlfir::Entity lhsBlockArg{regionAssignOp.getUserAssignmentLhs()};
+      hlfir::Entity rhsBlockArg{regionAssignOp.getUserAssignmentRhs()};
+      Fortran::lower::convertUserDefinedAssignmentToHLFIR(
+          loc, *this, *userDefinedAssignment, lhsBlockArg, rhsBlockArg,
+          localSymbols);
+    }
     builder.setInsertionPointAfter(regionAssignOp);
   }
 
@@ -3935,6 +3967,19 @@ private:
     assert(blockId == 0 && "invalid blockId");
     assert(activeConstructStack.empty() && "invalid construct stack state");
 
+    // Get the rounding mode at function entry, and arrange for it to be
+    // restored at all function exits.
+    if (!funit.isMainProgram() && funit.mayModifyRoundingMode) {
+      mlir::func::FuncOp getRound = fir::factory::getLlvmGetRounding(*builder);
+      mlir::func::FuncOp setRound = fir::factory::getLlvmSetRounding(*builder);
+      mlir::Value roundMode =
+          builder->create<fir::CallOp>(toLocation(), getRound).getResult(0);
+      mlir::Location endLoc =
+          toLocation(Fortran::lower::pft::stmtSourceLoc(funit.endStmt));
+      bridge.fctCtx().attachCleanup(
+          [=]() { builder->create<fir::CallOp>(endLoc, setRound, roundMode); });
+    }
+
     mapDummiesAndResults(funit, callee);
 
     // Map host associated symbols from parent procedure if any.
@@ -4010,8 +4055,38 @@ private:
         Fortran::lower::mapSymbolAttributes(*this, altResult, localSymbols,
                                             stmtCtx);
       } else {
+        // catch cases where the allocation for the function result storage type
+        // doesn't match the type of this symbol
+        mlir::Value preAlloc = primaryFuncResultStorage;
+        mlir::Type resTy = primaryFuncResultStorage.getType();
+        mlir::Type symTy = genType(altResult);
+        mlir::Type wrappedSymTy = fir::ReferenceType::get(symTy);
+        if (resTy != wrappedSymTy) {
+          // check size of the pointed to type so we can't overflow by writing
+          // double precision to a single precision allocation, etc
+          LLVM_ATTRIBUTE_UNUSED auto getBitWidth = [this](mlir::Type ty) {
+            // 15.6.2.6.3: differering result types should be integer, real,
+            // complex or logical
+            if (auto cmplx = mlir::dyn_cast_or_null<fir::ComplexType>(ty)) {
+              fir::KindTy kind = cmplx.getFKind();
+              return 2 * builder->getKindMap().getRealBitsize(kind);
+            }
+            if (auto logical = mlir::dyn_cast_or_null<fir::LogicalType>(ty)) {
+              fir::KindTy kind = logical.getFKind();
+              return builder->getKindMap().getLogicalBitsize(kind);
+            }
+            return ty.getIntOrFloatBitWidth();
+          };
+          assert(getBitWidth(fir::unwrapRefType(resTy)) >= getBitWidth(symTy));
+
+          // convert the storage to the symbol type so that the hlfir.declare
+          // gets the correct type for this symbol
+          preAlloc = builder->create<fir::ConvertOp>(getCurrentLocation(),
+                                                     wrappedSymTy, preAlloc);
+        }
+
         Fortran::lower::mapSymbolAttributes(*this, altResult, localSymbols,
-                                            stmtCtx, primaryFuncResultStorage);
+                                            stmtCtx, preAlloc);
       }
     }
 
@@ -4104,6 +4179,12 @@ private:
       startBlock(newBlock);
   }
 
+  void eraseDeadCodeAndBlocks(mlir::RewriterBase &rewriter,
+                              llvm::MutableArrayRef<mlir::Region> regions) {
+    (void)mlir::eraseUnreachableBlocks(rewriter, regions);
+    (void)mlir::runRegionDCE(rewriter, regions);
+  }
+
   /// Finish translation of a function.
   void endNewFunction(Fortran::lower::pft::FunctionLikeUnit &funit) {
     setCurrentPosition(Fortran::lower::pft::stmtSourceLoc(funit.endStmt));
@@ -4122,7 +4203,7 @@ private:
     // Eliminate dead code as a prerequisite to calling other IR passes.
     // FIXME: This simplification should happen in a normal pass, not here.
     mlir::IRRewriter rewriter(*builder);
-    (void)mlir::simplifyRegions(rewriter, {builder->getRegion()});
+    (void)eraseDeadCodeAndBlocks(rewriter, {builder->getRegion()});
     delete builder;
     builder = nullptr;
     hostAssocTuple = mlir::Value{};
