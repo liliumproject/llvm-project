@@ -84,11 +84,10 @@ class OpenMPIRBuilderConfig {
 public:
   /// Flag for specifying if the compilation is done for embedded device code
   /// or host code.
-  std::optional<bool> IsEmbedded;
+  std::optional<bool> IsTargetDevice;
 
-  /// Flag for specifying if the compilation is done for an offloading target,
-  /// like GPU.
-  std::optional<bool> IsTargetCodegen;
+  /// Flag for specifying if the compilation is done for an accelerator.
+  std::optional<bool> IsGPU;
 
   /// Flag for specifying weather a requires unified_shared_memory
   /// directive is present or not.
@@ -103,22 +102,22 @@ public:
   std::optional<StringRef> Separator;
 
   OpenMPIRBuilderConfig() {}
-  OpenMPIRBuilderConfig(bool IsEmbedded, bool IsTargetCodegen,
+  OpenMPIRBuilderConfig(bool IsTargetDevice, bool IsGPU,
                         bool HasRequiresUnifiedSharedMemory,
                         bool OpenMPOffloadMandatory)
-      : IsEmbedded(IsEmbedded), IsTargetCodegen(IsTargetCodegen),
+      : IsTargetDevice(IsTargetDevice), IsGPU(IsGPU),
         HasRequiresUnifiedSharedMemory(HasRequiresUnifiedSharedMemory),
         OpenMPOffloadMandatory(OpenMPOffloadMandatory) {}
 
   // Getters functions that assert if the required values are not present.
-  bool isEmbedded() const {
-    assert(IsEmbedded.has_value() && "IsEmbedded is not set");
-    return *IsEmbedded;
+  bool isTargetDevice() const {
+    assert(IsTargetDevice.has_value() && "IsTargetDevice is not set");
+    return *IsTargetDevice;
   }
 
-  bool isTargetCodegen() const {
-    assert(IsTargetCodegen.has_value() && "IsTargetCodegen is not set");
-    return *IsTargetCodegen;
+  bool isGPU() const {
+    assert(IsGPU.has_value() && "IsGPU is not set");
+    return *IsGPU;
   }
 
   bool hasRequiresUnifiedSharedMemory() const {
@@ -132,28 +131,28 @@ public:
            "OpenMPOffloadMandatory is not set");
     return *OpenMPOffloadMandatory;
   }
-  // Returns the FirstSeparator if set, otherwise use the default
-  // separator depending on isTargetCodegen
+  // Returns the FirstSeparator if set, otherwise use the default separator
+  // depending on isGPU
   StringRef firstSeparator() const {
     if (FirstSeparator.has_value())
       return *FirstSeparator;
-    if (isTargetCodegen())
+    if (isGPU())
       return "_";
     return ".";
   }
 
-  // Returns the Separator if set, otherwise use the default
-  // separator depending on isTargetCodegen
+  // Returns the Separator if set, otherwise use the default separator depending
+  // on isGPU
   StringRef separator() const {
     if (Separator.has_value())
       return *Separator;
-    if (isTargetCodegen())
+    if (isGPU())
       return "$";
     return ".";
   }
 
-  void setIsEmbedded(bool Value) { IsEmbedded = Value; }
-  void setIsTargetCodegen(bool Value) { IsTargetCodegen = Value; }
+  void setIsTargetDevice(bool Value) { IsTargetDevice = Value; }
+  void setIsGPU(bool Value) { IsGPU = Value; }
   void setHasRequiresUnifiedSharedMemory(bool Value) {
     HasRequiresUnifiedSharedMemory = Value;
   }
@@ -327,6 +326,8 @@ public:
     OMPTargetGlobalVarEntryEnter = 0x2,
     /// Mark the entry as having no declare target entry kind.
     OMPTargetGlobalVarEntryNone = 0x3,
+    /// Mark the entry as a declare target indirect global.
+    OMPTargetGlobalVarEntryIndirect = 0x8,
   };
 
   /// Kind of device clause for declare target variables
@@ -350,6 +351,7 @@ public:
     /// Type of the global variable.
     int64_t VarSize;
     GlobalValue::LinkageTypes Linkage;
+    const std::string VarName;
 
   public:
     OffloadEntryInfoDeviceGlobalVar()
@@ -360,13 +362,15 @@ public:
     explicit OffloadEntryInfoDeviceGlobalVar(unsigned Order, Constant *Addr,
                                              int64_t VarSize,
                                              OMPTargetGlobalVarEntryKind Flags,
-                                             GlobalValue::LinkageTypes Linkage)
+                                             GlobalValue::LinkageTypes Linkage,
+                                             const std::string &VarName)
         : OffloadEntryInfo(OffloadingEntryInfoDeviceGlobalVar, Order, Flags),
-          VarSize(VarSize), Linkage(Linkage) {
+          VarSize(VarSize), Linkage(Linkage), VarName(VarName) {
       setAddress(Addr);
     }
 
     int64_t getVarSize() const { return VarSize; }
+    StringRef getVarName() const { return VarName; }
     void setVarSize(int64_t Size) { VarSize = Size; }
     GlobalValue::LinkageTypes getLinkage() const { return Linkage; }
     void setLinkage(GlobalValue::LinkageTypes LT) { Linkage = LT; }
@@ -1189,10 +1193,7 @@ public:
                   AtomicReductionGenTy AtomicReductionGen)
         : ElementType(ElementType), Variable(Variable),
           PrivateVariable(PrivateVariable), ReductionGen(ReductionGen),
-          AtomicReductionGen(AtomicReductionGen) {
-      assert(cast<PointerType>(Variable->getType())
-          ->isOpaqueOrPointeeTypeMatches(ElementType) && "Invalid elem type");
-    }
+          AtomicReductionGen(AtomicReductionGen) {}
 
     /// Reduction element type, must match pointee type of variable.
     Type *ElementType;
@@ -1473,7 +1474,7 @@ public:
   /// <critical_section_name> + ".var" for "omp critical" directives; 2)
   /// <mangled_name_for_global_var> + ".cache." for cache for threadprivate
   /// variables.
-  StringMap<Constant*, BumpPtrAllocator> InternalVars;
+  StringMap<GlobalVariable *, BumpPtrAllocator> InternalVars;
 
   /// Computes the size of type in bytes.
   Value *getSizeInBytes(Value *BasePtr);
@@ -1611,6 +1612,9 @@ public:
   public:
     TargetDataRTArgs RTArgs;
 
+    SmallMapVector<const Value *, std::pair<Value *, Value *>, 4>
+        DevicePtrInfoMap;
+
     /// Indicate whether any user-defined mapper exists.
     bool HasMapper = false;
     /// The total number of pointers passed to the runtime library.
@@ -1637,7 +1641,9 @@ public:
     bool separateBeginEndCalls() { return SeparateBeginEndCalls; }
   };
 
+  enum class DeviceInfoTy { None, Pointer, Address };
   using MapValuesArrayTy = SmallVector<Value *, 4>;
+  using MapDeviceInfoArrayTy = SmallVector<DeviceInfoTy, 4>;
   using MapFlagsArrayTy = SmallVector<omp::OpenMPOffloadMappingFlags, 4>;
   using MapNamesArrayTy = SmallVector<Constant *, 4>;
   using MapDimArrayTy = SmallVector<uint64_t, 4>;
@@ -1656,6 +1662,7 @@ public:
     };
     MapValuesArrayTy BasePointers;
     MapValuesArrayTy Pointers;
+    MapDeviceInfoArrayTy DevicePointers;
     MapValuesArrayTy Sizes;
     MapFlagsArrayTy Types;
     MapNamesArrayTy Names;
@@ -1666,6 +1673,8 @@ public:
       BasePointers.append(CurInfo.BasePointers.begin(),
                           CurInfo.BasePointers.end());
       Pointers.append(CurInfo.Pointers.begin(), CurInfo.Pointers.end());
+      DevicePointers.append(CurInfo.DevicePointers.begin(),
+                            CurInfo.DevicePointers.end());
       Sizes.append(CurInfo.Sizes.begin(), CurInfo.Sizes.end());
       Types.append(CurInfo.Types.begin(), CurInfo.Types.end());
       Names.append(CurInfo.Names.begin(), CurInfo.Names.end());
@@ -1724,13 +1733,14 @@ public:
   void emitOffloadingArrays(
       InsertPointTy AllocaIP, InsertPointTy CodeGenIP, MapInfosTy &CombinedInfo,
       TargetDataInfo &Info, bool IsNonContiguous = false,
-      function_ref<void(unsigned int, Value *, Value *)> DeviceAddrCB = nullptr,
+      function_ref<void(unsigned int, Value *)> DeviceAddrCB = nullptr,
       function_ref<Value *(unsigned int)> CustomMapperCB = nullptr);
 
   /// Creates offloading entry for the provided entry ID \a ID, address \a
   /// Addr, size \a Size, and flags \a Flags.
   void createOffloadEntry(Constant *ID, Constant *Addr, uint64_t Size,
-                          int32_t Flags, GlobalValue::LinkageTypes);
+                          int32_t Flags, GlobalValue::LinkageTypes,
+                          StringRef Name = "");
 
   /// The kind of errors that can occur when emitting the offload entries and
   /// metadata.
@@ -1993,8 +2003,7 @@ public:
   /// Create a runtime call for kmpc_target_deinit
   ///
   /// \param Loc The insert and source location description.
-  /// \param IsSPMD Flag to indicate if the kernel is an SPMD kernel or not.
-  void createTargetDeinit(const LocationDescription &Loc, bool IsSPMD);
+  void createTargetDeinit(const LocationDescription &Loc);
 
   ///}
 
@@ -2085,6 +2094,12 @@ public:
   /// duplicating the body code.
   enum BodyGenTy { Priv, DupNoPriv, NoPriv };
 
+  /// Callback type for creating the map infos for the kernel parameters.
+  /// \param CodeGenIP is the insertion point where code should be generated,
+  ///        if any.
+  using GenMapInfoCallbackTy =
+      function_ref<MapInfosTy &(InsertPointTy CodeGenIP)>;
+
   /// Generator for '#omp target data'
   ///
   /// \param Loc The location where the target data construct was encountered.
@@ -2098,15 +2113,21 @@ public:
   /// \param Info Stores all information realted to the Target Data directive.
   /// \param GenMapInfoCB Callback that populates the MapInfos and returns.
   /// \param BodyGenCB Optional Callback to generate the region code.
+  /// \param DeviceAddrCB Optional callback to generate code related to
+  /// use_device_ptr and use_device_addr.
+  /// \param CustomMapperCB Optional callback to generate code related to
+  /// custom mappers.
   OpenMPIRBuilder::InsertPointTy createTargetData(
       const LocationDescription &Loc, InsertPointTy AllocaIP,
       InsertPointTy CodeGenIP, Value *DeviceID, Value *IfCond,
-      TargetDataInfo &Info,
-      function_ref<MapInfosTy &(InsertPointTy CodeGenIP)> GenMapInfoCB,
+      TargetDataInfo &Info, GenMapInfoCallbackTy GenMapInfoCB,
       omp::RuntimeFunction *MapperFunc = nullptr,
       function_ref<InsertPointTy(InsertPointTy CodeGenIP,
                                  BodyGenTy BodyGenType)>
-          BodyGenCB = nullptr);
+          BodyGenCB = nullptr,
+      function_ref<void(unsigned int, Value *)> DeviceAddrCB = nullptr,
+      function_ref<Value *(unsigned int)> CustomMapperCB = nullptr,
+      Value *SrcLocInfo = nullptr);
 
   using TargetBodyGenCallbackTy = function_ref<InsertPointTy(
       InsertPointTy AllocaIP, InsertPointTy CodeGenIP)>;
@@ -2123,11 +2144,31 @@ public:
   /// as arguments to the outlined function.
   /// \param BodyGenCB Callback that will generate the region code.
   InsertPointTy createTarget(const LocationDescription &Loc,
+                             OpenMPIRBuilder::InsertPointTy AllocaIP,
                              OpenMPIRBuilder::InsertPointTy CodeGenIP,
                              TargetRegionEntryInfo &EntryInfo, int32_t NumTeams,
                              int32_t NumThreads,
                              SmallVectorImpl<Value *> &Inputs,
+                             GenMapInfoCallbackTy GenMapInfoCB,
                              TargetBodyGenCallbackTy BodyGenCB);
+
+  /// Returns __kmpc_for_static_init_* runtime function for the specified
+  /// size \a IVSize and sign \a IVSigned. Will create a distribute call
+  /// __kmpc_distribute_static_init* if \a IsGPUDistribute is set.
+  FunctionCallee createForStaticInitFunction(unsigned IVSize, bool IVSigned,
+                                             bool IsGPUDistribute);
+
+  /// Returns __kmpc_dispatch_init_* runtime function for the specified
+  /// size \a IVSize and sign \a IVSigned.
+  FunctionCallee createDispatchInitFunction(unsigned IVSize, bool IVSigned);
+
+  /// Returns __kmpc_dispatch_next_* runtime function for the specified
+  /// size \a IVSize and sign \a IVSigned.
+  FunctionCallee createDispatchNextFunction(unsigned IVSize, bool IVSigned);
+
+  /// Returns __kmpc_dispatch_fini_* runtime function for the specified
+  /// size \a IVSize and sign \a IVSigned.
+  FunctionCallee createDispatchFiniFunction(unsigned IVSize, bool IVSigned);
 
   /// Declarations for LLVM-IR types (simple, array, function and structure) are
   /// generated below. Their names are defined and used in OpenMPKinds.def. Here

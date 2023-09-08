@@ -15,6 +15,7 @@
 #include "clang/Basic/FileEntry.h"
 #include "clang/Basic/LangStandard.h"
 #include "clang/Basic/Sarif.h"
+#include "clang/Basic/Stack.h"
 #include "clang/Frontend/ASTUnit.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendDiagnostic.h"
@@ -60,6 +61,11 @@ public:
     if (DeletePrevious)
       delete Previous;
   }
+
+  DelegatingDeserializationListener(const DelegatingDeserializationListener &) =
+      delete;
+  DelegatingDeserializationListener &
+  operator=(const DelegatingDeserializationListener &) = delete;
 
   void ReaderInitialized(ASTReader *Reader) override {
     if (Previous)
@@ -1017,9 +1023,15 @@ bool FrontendAction::BeginSourceFile(CompilerInstance &CI,
   }
 
   // If we were asked to load any module files, do so now.
-  for (const auto &ModuleFile : CI.getFrontendOpts().ModuleFiles)
-    if (!CI.loadModuleFile(ModuleFile))
+  for (const auto &ModuleFile : CI.getFrontendOpts().ModuleFiles) {
+    serialization::ModuleFile *Loaded = nullptr;
+    if (!CI.loadModuleFile(ModuleFile, Loaded))
       return false;
+
+    if (Loaded && Loaded->StandardCXXModule)
+      CI.getDiagnostics().Report(
+          diag::warn_eagerly_load_for_standard_cplusplus_modules);
+  }
 
   // If there is a layout overrides file, attach an external AST source that
   // provides the layouts from that file.
@@ -1150,6 +1162,10 @@ void ASTFrontendAction::ExecuteAction() {
   CompilerInstance &CI = getCompilerInstance();
   if (!CI.hasPreprocessor())
     return;
+  // This is a fallback: If the client forgets to invoke this, we mark the
+  // current stack as the bottom. Though not optimal, this could help prevent
+  // stack overflow during deep recursion.
+  clang::noteBottomOfStack();
 
   // FIXME: Move the truncation aspect of this into Sema, we delayed this till
   // here so the source manager would be initialized.

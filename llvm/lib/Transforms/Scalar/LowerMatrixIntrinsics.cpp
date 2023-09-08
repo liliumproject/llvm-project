@@ -36,12 +36,9 @@
 #include "llvm/IR/IntrinsicInst.h"
 #include "llvm/IR/MatrixBuilder.h"
 #include "llvm/IR/PatternMatch.h"
-#include "llvm/InitializePasses.h"
-#include "llvm/Pass.h"
 #include "llvm/Support/Alignment.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
-#include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/LoopUtils.h"
 #include "llvm/Transforms/Utils/MatrixUtils.h"
@@ -272,7 +269,7 @@ class LowerMatrixIntrinsics {
 
       unsigned D = isColumnMajor() ? NumColumns : NumRows;
       for (unsigned J = 0; J < D; ++J)
-        addVector(UndefValue::get(FixedVectorType::get(
+        addVector(PoisonValue::get(FixedVectorType::get(
             EltTy, isColumnMajor() ? NumRows : NumColumns)));
     }
 
@@ -1650,15 +1647,14 @@ public:
     auto *ArrayTy = ArrayType::get(VT->getElementType(), VT->getNumElements());
     AllocaInst *Alloca =
         Builder.CreateAlloca(ArrayTy, Load->getPointerAddressSpace());
-    Value *BC = Builder.CreateBitCast(Alloca, VT->getPointerTo());
 
-    Builder.CreateMemCpy(BC, Alloca->getAlign(), Load->getPointerOperand(),
+    Builder.CreateMemCpy(Alloca, Alloca->getAlign(), Load->getPointerOperand(),
                          Load->getAlign(), LoadLoc.Size.getValue());
     Builder.SetInsertPoint(Fusion, Fusion->begin());
     PHINode *PHI = Builder.CreatePHI(Load->getPointerOperandType(), 3);
     PHI->addIncoming(Load->getPointerOperand(), Check0);
     PHI->addIncoming(Load->getPointerOperand(), Check1);
-    PHI->addIncoming(BC, Copy);
+    PHI->addIncoming(Alloca, Copy);
 
     // Adjust DT.
     DTUpdates.push_back({DT->Insert, Check0, Check1});
@@ -2181,7 +2177,7 @@ public:
     /// Returns true if \p V is a matrix value in the given subprogram.
     bool isMatrix(Value *V) const { return ExprsInSubprogram.count(V); }
 
-    /// If \p V is a matrix value, print its shape as as NumRows x NumColumns to
+    /// If \p V is a matrix value, print its shape as NumRows x NumColumns to
     /// \p SS.
     void prettyPrintMatrixType(Value *V, raw_string_ostream &SS) {
       auto M = Inst2Matrix.find(V);

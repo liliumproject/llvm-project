@@ -34,12 +34,15 @@ Getting Started with libc++
 .. toctree::
    :maxdepth: 1
 
-   ReleaseNotes
+   ReleaseNotes/17
+   ReleaseNotes/18
    UsingLibcxx
    BuildingLibcxx
    TestingLibcxx
    Contributing
+   ImplementationDefinedBehavior
    Modules
+   Hardening
    ReleaseProcedure
    Status/Cxx14
    Status/Cxx17
@@ -191,6 +194,7 @@ Design Documents
    DesignDocs/UniquePtrTrivialAbi
    DesignDocs/UnspecifiedBehaviorRandomization
    DesignDocs/VisibilityMacros
+   DesignDocs/TimeZone
 
 
 Build Bots and Test Coverage
