@@ -3099,7 +3099,7 @@ struct SubViewReturnTypeCanonicalizer {
 
     // Directly return the non-rank reduced type if there are no dropped dims.
     llvm::SmallBitVector droppedDims = op.getDroppedDims();
-    if (droppedDims.empty())
+    if (droppedDims.none())
       return nonReducedType;
 
     // Take the strides and offset from the non-rank reduced type.
@@ -3402,8 +3402,8 @@ LogicalResult AtomicRMWOp::verify() {
         "expects the number of subscripts to be equal to memref rank");
   switch (getKind()) {
   case arith::AtomicRMWKind::addf:
-  case arith::AtomicRMWKind::maxf:
-  case arith::AtomicRMWKind::minf:
+  case arith::AtomicRMWKind::maximumf:
+  case arith::AtomicRMWKind::minimumf:
   case arith::AtomicRMWKind::mulf:
     if (!llvm::isa<FloatType>(getValue().getType()))
       return emitOpError() << "with kind '"

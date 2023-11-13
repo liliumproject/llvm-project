@@ -152,7 +152,6 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DepthFirstIterator.h"
 #include "llvm/ADT/SetVector.h"
-#include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
@@ -1718,6 +1717,12 @@ struct MemorySanitizerVisitor : public InstVisitor<MemorySanitizerVisitor> {
   std::pair<Value *, Value *>
   getShadowOriginPtrUserspace(Value *Addr, IRBuilder<> &IRB, Type *ShadowTy,
                               MaybeAlign Alignment) {
+    VectorType *VectTy = dyn_cast<VectorType>(Addr->getType());
+    if (!VectTy) {
+      assert(Addr->getType()->isPointerTy());
+    } else {
+      assert(VectTy->getElementType()->isPointerTy());
+    }
     Type *IntptrTy = ptrToIntPtrType(Addr->getType());
     Value *ShadowOffset = getShadowPtrOffset(Addr, IRB);
     Value *ShadowLong = ShadowOffset;
@@ -3379,12 +3384,10 @@ struct MemorySanitizerVisitor : public InstVisitor<MemorySanitizerVisitor> {
     IRBuilder<> IRB(&I);
     Value *Addr = I.getArgOperand(0);
     Type *Ty = IRB.getInt32Ty();
-    Type *PtrTy = IRB.getPtrTy();
     Value *ShadowPtr =
         getShadowOriginPtr(Addr, IRB, Ty, Align(1), /*isStore*/ true).first;
 
-    IRB.CreateStore(getCleanShadow(Ty),
-                    IRB.CreatePointerCast(ShadowPtr, PtrTy));
+    IRB.CreateStore(getCleanShadow(Ty), ShadowPtr);
 
     if (ClCheckAccessAddress)
       insertShadowCheck(Addr, &I);
@@ -4160,7 +4163,7 @@ struct MemorySanitizerVisitor : public InstVisitor<MemorySanitizerVisitor> {
     if (Function *Func = CB.getCalledFunction()) {
       // __sanitizer_unaligned_{load,store} functions may be called by users
       // and always expects shadows in the TLS. So don't check them.
-      MayCheckCall &= !Func->getName().startswith("__sanitizer_unaligned_");
+      MayCheckCall &= !Func->getName().starts_with("__sanitizer_unaligned_");
     }
 
     unsigned ArgOffset = 0;
@@ -4943,6 +4946,7 @@ struct VarArgAMD64Helper : public VarArgHelper {
 };
 
 /// MIPS64-specific implementation of VarArgHelper.
+/// NOTE: This is also used for LoongArch64.
 struct VarArgMIPS64Helper : public VarArgHelper {
   Function &F;
   MemorySanitizer &MS;
@@ -5260,21 +5264,25 @@ struct VarArgAArch64Helper : public VarArgHelper {
       // we need to adjust the offset for both GR and VR fields based on
       // the __{gr,vr}_offs value (since they are stores based on incoming
       // named arguments).
+      Type *RegSaveAreaPtrTy = IRB.getInt8PtrTy();
 
       // Read the stack pointer from the va_list.
-      Value *StackSaveAreaPtr = getVAField64(IRB, VAListTag, 0);
+      Value *StackSaveAreaPtr =
+          IRB.CreateIntToPtr(getVAField64(IRB, VAListTag, 0), RegSaveAreaPtrTy);
 
       // Read both the __gr_top and __gr_off and add them up.
       Value *GrTopSaveAreaPtr = getVAField64(IRB, VAListTag, 8);
       Value *GrOffSaveArea = getVAField32(IRB, VAListTag, 24);
 
-      Value *GrRegSaveAreaPtr = IRB.CreateAdd(GrTopSaveAreaPtr, GrOffSaveArea);
+      Value *GrRegSaveAreaPtr = IRB.CreateIntToPtr(
+          IRB.CreateAdd(GrTopSaveAreaPtr, GrOffSaveArea), RegSaveAreaPtrTy);
 
       // Read both the __vr_top and __vr_off and add them up.
       Value *VrTopSaveAreaPtr = getVAField64(IRB, VAListTag, 16);
       Value *VrOffSaveArea = getVAField32(IRB, VAListTag, 28);
 
-      Value *VrRegSaveAreaPtr = IRB.CreateAdd(VrTopSaveAreaPtr, VrOffSaveArea);
+      Value *VrRegSaveAreaPtr = IRB.CreateIntToPtr(
+          IRB.CreateAdd(VrTopSaveAreaPtr, VrOffSaveArea), RegSaveAreaPtrTy);
 
       // It does not know how many named arguments is being used and, on the
       // callsite all the arguments were saved.  Since __gr_off is defined as
@@ -5834,6 +5842,10 @@ struct VarArgSystemZHelper : public VarArgHelper {
   }
 };
 
+// Loongarch64 is not a MIPS, but the current vargs calling convention matches
+// the MIPS.
+using VarArgLoongArch64Helper = VarArgMIPS64Helper;
+
 /// A no-op implementation of VarArgHelper.
 struct VarArgNoOpHelper : public VarArgHelper {
   VarArgNoOpHelper(Function &F, MemorySanitizer &MS,
@@ -5866,6 +5878,8 @@ static VarArgHelper *CreateVarArgHelper(Function &Func, MemorySanitizer &Msan,
     return new VarArgPowerPC64Helper(Func, Msan, Visitor);
   else if (TargetTriple.getArch() == Triple::systemz)
     return new VarArgSystemZHelper(Func, Msan, Visitor);
+  else if (TargetTriple.isLoongArch64())
+    return new VarArgLoongArch64Helper(Func, Msan, Visitor);
   else
     return new VarArgNoOpHelper(Func, Msan, Visitor);
 }

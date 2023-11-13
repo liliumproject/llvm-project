@@ -105,6 +105,9 @@ public:
   bool VisitCXXNoexceptExpr(const CXXNoexceptExpr *E);
   bool VisitCXXConstructExpr(const CXXConstructExpr *E);
   bool VisitSourceLocExpr(const SourceLocExpr *E);
+  bool VisitOffsetOfExpr(const OffsetOfExpr *E);
+  bool VisitCXXScalarValueInitExpr(const CXXScalarValueInitExpr *E);
+  bool VisitSizeOfPackExpr(const SizeOfPackExpr *E);
 
 protected:
   bool visitExpr(const Expr *E) override;
@@ -220,7 +223,7 @@ private:
   friend class SourceLocScope<Emitter>;
 
   /// Emits a zero initializer.
-  bool visitZeroInitializer(QualType QT, const Expr *E);
+  bool visitZeroInitializer(PrimType T, QualType QT, const Expr *E);
   bool visitZeroRecordInitializer(const Record *R, const Expr *E);
 
   enum class DerefKind {
@@ -302,6 +305,9 @@ protected:
   /// Flag inidicating if we're initializing an already created
   /// variable. This is set in visitInitializer().
   bool Initializing = false;
+
+  /// Flag indicating if we're initializing a global variable.
+  bool GlobalDecl = false;
 };
 
 extern template class ByteCodeExprGen<ByteCodeEmitter>;

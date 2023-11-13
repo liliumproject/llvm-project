@@ -346,6 +346,8 @@ def err_opt_not_valid_on_target : Error<
   "option '%0' cannot be specified on this target">;
 def err_invalid_feature_combination : Error<
   "invalid feature combination: %0">;
+def warn_invalid_feature_combination : Warning<
+  "invalid feature combination: %0">, InGroup<DiagGroup<"invalid-feature-combination">>;
 def warn_target_unrecognized_env : Warning<
   "mismatch between architecture and environment in target triple '%0'; did you mean '%1'?">,
   InGroup<InvalidCommandLineArgument>;
@@ -356,9 +358,8 @@ def err_file_modified : Error<
   "file '%0' modified since it was first processed">, DefaultFatal;
 def err_file_too_large : Error<
   "sorry, unsupported: file '%0' is too large for Clang to process">;
-def err_include_too_large : Error<
-  "sorry, this include generates a translation unit too large for"
-  " Clang to process.">, DefaultFatal;
+def err_sloc_space_too_large : Error<
+  "sorry, the translation unit is too large for Clang to process: ran out of source locations">, DefaultFatal;
 def err_unsupported_bom : Error<"%0 byte order mark detected in '%1', but "
   "encoding is not supported">, DefaultFatal;
 def err_unable_to_rename_temp : Error<

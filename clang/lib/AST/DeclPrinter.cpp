@@ -250,13 +250,23 @@ raw_ostream& DeclPrinter::Indent(unsigned Indentation) {
   return Out;
 }
 
-static bool canPrintOnLeftSide(attr::Kind kind) {
-  switch (kind) {
+// For CLANG_ATTR_LIST_CanPrintOnLeft macro.
 #include "clang/Basic/AttrLeftSideCanPrintList.inc"
+
+// For CLANG_ATTR_LIST_PrintOnLeft macro.
+#include "clang/Basic/AttrLeftSideMustPrintList.inc"
+
+static bool canPrintOnLeftSide(attr::Kind kind) {
+#ifdef CLANG_ATTR_LIST_CanPrintOnLeft
+  switch (kind) {
+  CLANG_ATTR_LIST_CanPrintOnLeft
     return true;
   default:
     return false;
   }
+#else
+  return false;
+#endif
 }
 
 static bool canPrintOnLeftSide(const Attr *A) {
@@ -267,12 +277,16 @@ static bool canPrintOnLeftSide(const Attr *A) {
 }
 
 static bool mustPrintOnLeftSide(attr::Kind kind) {
+#ifdef CLANG_ATTR_LIST_PrintOnLeft
   switch (kind) {
-#include "clang/Basic/AttrLeftSideMustPrintList.inc"
+  CLANG_ATTR_LIST_PrintOnLeft
     return true;
   default:
     return false;
   }
+#else
+  return false;
+#endif
 }
 
 static bool mustPrintOnLeftSide(const Attr *A) {
@@ -314,7 +328,6 @@ void DeclPrinter::prettyPrintAttributes(Decl *D, llvm::raw_ostream &Out,
                    VD->getInitStyle() == VarDecl::CallInit)
           AttrLoc = AttrPrintLoc::Left;
       }
-
       // Only print the side matches the user requested.
       if ((Loc & AttrLoc) != AttrPrintLoc::None)
         A->printPretty(Out, Policy);
@@ -949,6 +962,10 @@ void DeclPrinter::VisitLabelDecl(LabelDecl *D) {
 void DeclPrinter::VisitVarDecl(VarDecl *D) {
   prettyPrintPragmas(D);
 
+  if (const auto *Param = dyn_cast<ParmVarDecl>(D);
+      Param && Param->isExplicitObjectParameter())
+    Out << "this ";
+
   std::string LeftSide;
   llvm::raw_string_ostream LeftSideStream(LeftSide);
 
@@ -1177,10 +1194,10 @@ void DeclPrinter::VisitCXXRecordDecl(CXXRecordDecl *D) {
 
 void DeclPrinter::VisitLinkageSpecDecl(LinkageSpecDecl *D) {
   const char *l;
-  if (D->getLanguage() == LinkageSpecDecl::lang_c)
+  if (D->getLanguage() == LinkageSpecLanguageIDs::C)
     l = "C";
   else {
-    assert(D->getLanguage() == LinkageSpecDecl::lang_cxx &&
+    assert(D->getLanguage() == LinkageSpecLanguageIDs::CXX &&
            "unknown language in linkage specification");
     l = "C++";
   }
@@ -1849,17 +1866,17 @@ void DeclPrinter::VisitOMPDeclareReductionDecl(OMPDeclareReductionDecl *D) {
     if (auto *Init = D->getInitializer()) {
       Out << " initializer(";
       switch (D->getInitializerKind()) {
-      case OMPDeclareReductionDecl::DirectInit:
+      case OMPDeclareReductionInitKind::Direct:
         Out << "omp_priv(";
         break;
-      case OMPDeclareReductionDecl::CopyInit:
+      case OMPDeclareReductionInitKind::Copy:
         Out << "omp_priv = ";
         break;
-      case OMPDeclareReductionDecl::CallInit:
+      case OMPDeclareReductionInitKind::Call:
         break;
       }
       Init->printPretty(Out, nullptr, Policy, 0, "\n", &Context);
-      if (D->getInitializerKind() == OMPDeclareReductionDecl::DirectInit)
+      if (D->getInitializerKind() == OMPDeclareReductionInitKind::Direct)
         Out << ")";
       Out << ")";
     }
