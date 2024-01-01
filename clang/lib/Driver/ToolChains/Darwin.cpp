@@ -758,9 +758,14 @@ void darwin::Linker::ConstructJob(Compilation &C, const JobAction &JA,
     }
   }
 
-  // Add non-standard, platform-specific search paths, e.g., for DriverKit:
-  //  -L<sysroot>/System/DriverKit/usr/lib
-  //  -F<sysroot>/System/DriverKit/System/Library/Framework
+  // Add framework include paths and library search paths.
+  // There are two flavors:
+  // 1. The "non-standard" paths, e.g. for DriverKit:
+  //      -L<sysroot>/System/DriverKit/usr/lib
+  //      -F<sysroot>/System/DriverKit/System/Library/Frameworks
+  // 2. The "standard" paths, e.g. for macOS and iOS:
+  //      -F<sysroot>/System/Library/Frameworks
+  //      -F<sysroot>/Library/Frameworks
   {
     bool NonStandardSearchPath = false;
     const auto &Triple = getToolChain().getTriple();
@@ -771,18 +776,22 @@ void darwin::Linker::ConstructJob(Compilation &C, const JobAction &JA,
           (Version.getMajor() == 605 && Version.getMinor().value_or(0) < 1);
     }
 
-    if (NonStandardSearchPath) {
-      if (auto *Sysroot = Args.getLastArg(options::OPT_isysroot)) {
-        auto AddSearchPath = [&](StringRef Flag, StringRef SearchPath) {
-          SmallString<128> P(Sysroot->getValue());
-          AppendPlatformPrefix(P, Triple);
-          llvm::sys::path::append(P, SearchPath);
-          if (getToolChain().getVFS().exists(P)) {
-            CmdArgs.push_back(Args.MakeArgString(Flag + P));
-          }
-        };
+    if (auto *Sysroot = Args.getLastArg(options::OPT_isysroot)) {
+      auto AddSearchPath = [&](StringRef Flag, StringRef SearchPath) {
+        SmallString<128> P(Sysroot->getValue());
+        AppendPlatformPrefix(P, Triple);
+        llvm::sys::path::append(P, SearchPath);
+        if (getToolChain().getVFS().exists(P)) {
+          CmdArgs.push_back(Args.MakeArgString(Flag + P));
+        }
+      };
+
+      if (NonStandardSearchPath) {
         AddSearchPath("-L", "/usr/lib");
         AddSearchPath("-F", "/System/Library/Frameworks");
+      } else if (!Triple.isDriverKit()) {
+        AddSearchPath("-F", "/System/Library/Frameworks");
+        AddSearchPath("-F", "/Library/Frameworks");
       }
     }
   }
@@ -1010,13 +1019,13 @@ static const char *ArmMachOArchNameCPU(StringRef CPU) {
 
   // FIXME: Make sure this MachO triple mangling is really necessary.
   // ARMv5* normalises to ARMv5.
-  if (Arch.startswith("armv5"))
+  if (Arch.starts_with("armv5"))
     Arch = Arch.substr(0, 5);
   // ARMv6*, except ARMv6M, normalises to ARMv6.
-  else if (Arch.startswith("armv6") && !Arch.endswith("6m"))
+  else if (Arch.starts_with("armv6") && !Arch.ends_with("6m"))
     Arch = Arch.substr(0, 5);
   // ARMv7A normalises to ARMv7.
-  else if (Arch.endswith("v7a"))
+  else if (Arch.ends_with("v7a"))
     Arch = Arch.substr(0, 5);
   return Arch.data();
 }
@@ -1281,7 +1290,7 @@ void MachO::AddLinkRuntimeLib(const ArgList &Args, ArgStringList &CmdArgs,
   // rpaths. This is currently true from this place, but we need to be
   // careful if this function is ever called before user's rpaths are emitted.
   if (Opts & RLO_AddRPath) {
-    assert(DarwinLibName.endswith(".dylib") && "must be a dynamic library");
+    assert(DarwinLibName.ends_with(".dylib") && "must be a dynamic library");
 
     // Add @executable_path to rpath to support having the dylib copied with
     // the executable.
@@ -1319,8 +1328,8 @@ StringRef Darwin::getSDKName(StringRef isysroot) {
   auto EndSDK = llvm::sys::path::rend(isysroot);
   for (auto IT = BeginSDK; IT != EndSDK; ++IT) {
     StringRef SDK = *IT;
-    if (SDK.endswith(".sdk"))
-      return SDK.slice(0, SDK.size() - 4);
+    if (SDK.ends_with(".sdk"))
+        return SDK.slice(0, SDK.size() - 4);
   }
   return "";
 }
@@ -1959,22 +1968,23 @@ inferDeploymentTargetFromSDK(DerivedArgList &Args,
 
   auto CreatePlatformFromSDKName =
       [&](StringRef SDK) -> std::optional<DarwinPlatform> {
-    if (SDK.startswith("iPhoneOS") || SDK.startswith("iPhoneSimulator"))
+    if (SDK.starts_with("iPhoneOS") || SDK.starts_with("iPhoneSimulator"))
       return DarwinPlatform::createFromSDK(
           Darwin::IPhoneOS, Version,
-          /*IsSimulator=*/SDK.startswith("iPhoneSimulator"));
-    else if (SDK.startswith("MacOSX"))
+          /*IsSimulator=*/SDK.starts_with("iPhoneSimulator"));
+    else if (SDK.starts_with("MacOSX"))
       return DarwinPlatform::createFromSDK(Darwin::MacOS,
                                            getSystemOrSDKMacOSVersion(Version));
-    else if (SDK.startswith("WatchOS") || SDK.startswith("WatchSimulator"))
+    else if (SDK.starts_with("WatchOS") || SDK.starts_with("WatchSimulator"))
       return DarwinPlatform::createFromSDK(
           Darwin::WatchOS, Version,
-          /*IsSimulator=*/SDK.startswith("WatchSimulator"));
-    else if (SDK.startswith("AppleTVOS") || SDK.startswith("AppleTVSimulator"))
+          /*IsSimulator=*/SDK.starts_with("WatchSimulator"));
+    else if (SDK.starts_with("AppleTVOS") ||
+             SDK.starts_with("AppleTVSimulator"))
       return DarwinPlatform::createFromSDK(
           Darwin::TvOS, Version,
-          /*IsSimulator=*/SDK.startswith("AppleTVSimulator"));
-    else if (SDK.startswith("DriverKit"))
+          /*IsSimulator=*/SDK.starts_with("AppleTVSimulator"));
+    else if (SDK.starts_with("DriverKit"))
       return DarwinPlatform::createFromSDK(Darwin::DriverKit, Version);
     return std::nullopt;
   };
@@ -2073,7 +2083,7 @@ std::optional<DarwinPlatform> getDeploymentTargetFromTargetArg(
         continue;
       A->claim();
       // Accept a -target-variant triple when compiling code that may run on
-      // macOS or Mac Catalust.
+      // macOS or Mac Catalyst.
       if ((Triple.isMacOSX() && TVT.getOS() == llvm::Triple::IOS &&
            TVT.isMacCatalystEnvironment()) ||
           (TVT.isMacOSX() && Triple.getOS() == llvm::Triple::IOS &&
@@ -2339,8 +2349,8 @@ void Darwin::AddDeploymentTarget(DerivedArgList &Args) const {
     if (SDK.size() > 0) {
       size_t StartVer = SDK.find_first_of("0123456789");
       StringRef SDKName = SDK.slice(0, StartVer);
-      if (!SDKName.startswith(getPlatformFamily()) &&
-          !dropSDKNamePrefix(SDKName).startswith(getPlatformFamily()))
+      if (!SDKName.starts_with(getPlatformFamily()) &&
+          !dropSDKNamePrefix(SDKName).starts_with(getPlatformFamily()))
         getDriver().Diag(diag::warn_incompatible_sysroot)
             << SDKName << getPlatformFamily();
     }
@@ -2470,14 +2480,19 @@ void DarwinClang::AddClangCXXStdlibIncludeArgs(
 
   switch (GetCXXStdlibType(DriverArgs)) {
   case ToolChain::CST_Libcxx: {
-    // On Darwin, libc++ can be installed in one of the following two places:
-    // 1. Alongside the compiler in         <install>/include/c++/v1
-    // 2. In a SDK (or a custom sysroot) in <sysroot>/usr/include/c++/v1
+    // On Darwin, libc++ can be installed in one of the following places:
+    // 1. Alongside the compiler in <install>/include/c++/v1
+    // 2. Alongside the compiler in <clang-executable-folder>/../include/c++/v1
+    // 3. In a SDK (or a custom sysroot) in <sysroot>/usr/include/c++/v1
     //
-    // The precendence of paths is as listed above, i.e. we take the first path
-    // that exists. Also note that we never include libc++ twice -- we take the
-    // first path that exists and don't send the other paths to CC1 (otherwise
+    // The precedence of paths is as listed above, i.e. we take the first path
+    // that exists. Note that we never include libc++ twice -- we take the first
+    // path that exists and don't send the other paths to CC1 (otherwise
     // include_next could break).
+    //
+    // Also note that in most cases, (1) and (2) are exactly the same path.
+    // Those two paths will differ only when the `clang` program being run
+    // is actually a symlink to the real executable.
 
     // Check for (1)
     // Get from '<install>/bin' to '<install>/include/c++/v1'.
@@ -2494,7 +2509,20 @@ void DarwinClang::AddClangCXXStdlibIncludeArgs(
                    << "\"\n";
     }
 
-    // Otherwise, check for (2)
+    // (2) Check for the folder where the executable is located, if different.
+    if (getDriver().getInstalledDir() != getDriver().Dir) {
+      InstallBin = llvm::StringRef(getDriver().Dir);
+      llvm::sys::path::append(InstallBin, "..", "include", "c++", "v1");
+      if (getVFS().exists(InstallBin)) {
+        addSystemInclude(DriverArgs, CC1Args, InstallBin);
+        return;
+      } else if (DriverArgs.hasArg(options::OPT_v)) {
+        llvm::errs() << "ignoring nonexistent directory \"" << InstallBin
+                     << "\"\n";
+      }
+    }
+
+    // Otherwise, check for (3)
     llvm::SmallString<128> SysrootUsr = Sysroot;
     llvm::sys::path::append(SysrootUsr, "usr", "include", "c++", "v1");
     if (getVFS().exists(SysrootUsr)) {
