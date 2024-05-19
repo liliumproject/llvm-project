@@ -507,6 +507,16 @@ def TLS_base_addrX32 : I<0, Pseudo, (outs), (ins i32mem:$sym),
                   Requires<[In64BitMode, NotLP64]>;
 }
 
+// TLSDESC only clobbers EAX and EFLAGS. ESP is marked as a use to prevent
+// stack-pointer assignments that appear immediately before calls from
+// potentially appearing dead.
+let Defs = [EAX, EFLAGS], usesCustomInserter = 1, Uses = [RSP, SSP] in {
+  def TLS_desc32 : I<0, Pseudo, (outs), (ins i32mem:$sym),
+                     "# TLS_desc32", [(X86tlsdesc tls32addr:$sym)]>;
+  def TLS_desc64 : I<0, Pseudo, (outs), (ins i64mem:$sym),
+                     "# TLS_desc64", [(X86tlsdesc tls64addr:$sym)]>;
+}
+
 // Darwin TLS Support
 // For i386, the address of the thunk is passed on the stack, on return the
 // address of the variable is in %eax.  %ecx is trashed during the function
@@ -1493,27 +1503,71 @@ def : Pat<(xor GR32:$src1, -2147483648),
 
 // Odd encoding trick: -128 fits into an 8-bit immediate field while
 // +128 doesn't, so in this special case use a sub instead of an add.
-def : Pat<(add GR16:$src1, 128),
-          (SUB16ri GR16:$src1, -128)>;
+let Predicates = [NoNDD] in {
+  def : Pat<(add GR16:$src1, 128),
+            (SUB16ri GR16:$src1, -128)>;
+  def : Pat<(add GR32:$src1, 128),
+            (SUB32ri GR32:$src1, -128)>;
+  def : Pat<(add GR64:$src1, 128),
+            (SUB64ri32 GR64:$src1, -128)>;
+
+  def : Pat<(X86add_flag_nocf GR16:$src1, 128),
+            (SUB16ri GR16:$src1, -128)>;
+  def : Pat<(X86add_flag_nocf GR32:$src1, 128),
+            (SUB32ri GR32:$src1, -128)>;
+  def : Pat<(X86add_flag_nocf GR64:$src1, 128),
+            (SUB64ri32 GR64:$src1, -128)>;
+}
+let Predicates = [HasNDD] in {
+  def : Pat<(add GR16:$src1, 128),
+            (SUB16ri_ND GR16:$src1, -128)>;
+  def : Pat<(add GR32:$src1, 128),
+            (SUB32ri_ND GR32:$src1, -128)>;
+  def : Pat<(add GR64:$src1, 128),
+            (SUB64ri32_ND GR64:$src1, -128)>;
+
+  def : Pat<(X86add_flag_nocf GR16:$src1, 128),
+            (SUB16ri_ND GR16:$src1, -128)>;
+  def : Pat<(X86add_flag_nocf GR32:$src1, 128),
+            (SUB32ri_ND GR32:$src1, -128)>;
+  def : Pat<(X86add_flag_nocf GR64:$src1, 128),
+            (SUB64ri32_ND GR64:$src1, -128)>;
+}
 def : Pat<(store (add (loadi16 addr:$dst), 128), addr:$dst),
           (SUB16mi addr:$dst, -128)>;
-
-def : Pat<(add GR32:$src1, 128),
-          (SUB32ri GR32:$src1, -128)>;
 def : Pat<(store (add (loadi32 addr:$dst), 128), addr:$dst),
           (SUB32mi addr:$dst, -128)>;
-
-def : Pat<(add GR64:$src1, 128),
-          (SUB64ri32 GR64:$src1, -128)>;
 def : Pat<(store (add (loadi64 addr:$dst), 128), addr:$dst),
           (SUB64mi32 addr:$dst, -128)>;
+let Predicates = [HasNDD] in {
+  def : Pat<(add (loadi16 addr:$src), 128),
+            (SUB16mi_ND addr:$src, -128)>;
+  def : Pat<(add (loadi32 addr:$src), 128),
+            (SUB32mi_ND addr:$src, -128)>;
+  def : Pat<(add (loadi64 addr:$src), 128),
+            (SUB64mi32_ND addr:$src, -128)>;
+}
 
-def : Pat<(X86add_flag_nocf GR16:$src1, 128),
-          (SUB16ri GR16:$src1, -128)>;
-def : Pat<(X86add_flag_nocf GR32:$src1, 128),
-          (SUB32ri GR32:$src1, -128)>;
-def : Pat<(X86add_flag_nocf GR64:$src1, 128),
-          (SUB64ri32 GR64:$src1, -128)>;
+// The same trick applies for 32-bit immediate fields in 64-bit
+// instructions.
+let Predicates = [NoNDD] in {
+  def : Pat<(add GR64:$src1, 0x0000000080000000),
+            (SUB64ri32 GR64:$src1, 0xffffffff80000000)>;
+  def : Pat<(X86add_flag_nocf GR64:$src1, 0x0000000080000000),
+            (SUB64ri32 GR64:$src1, 0xffffffff80000000)>;
+}
+let Predicates = [HasNDD] in {
+  def : Pat<(add GR64:$src1, 0x0000000080000000),
+            (SUB64ri32_ND GR64:$src1, 0xffffffff80000000)>;
+  def : Pat<(X86add_flag_nocf GR64:$src1, 0x0000000080000000),
+            (SUB64ri32_ND GR64:$src1, 0xffffffff80000000)>;
+}
+def : Pat<(store (add (loadi64 addr:$dst), 0x0000000080000000), addr:$dst),
+          (SUB64mi32 addr:$dst, 0xffffffff80000000)>;
+let Predicates = [HasNDD] in {
+  def : Pat<(add(loadi64 addr:$src), 0x0000000080000000),
+            (SUB64mi32_ND addr:$src, 0xffffffff80000000)>;
+}
 
 // Depositing value to 8/16 bit subreg:
 def : Pat<(or (and GR64:$dst, -256), 
@@ -1531,15 +1585,6 @@ def : Pat<(or (and GR64:$dst, -65536),
 def : Pat<(or (and GR32:$dst, -65536), 
               (i32 (zextloadi16 addr:$src))),
           (INSERT_SUBREG (i32 (COPY $dst)), (MOV16rm  i16mem:$src), sub_16bit)>; 
-
-// The same trick applies for 32-bit immediate fields in 64-bit
-// instructions.
-def : Pat<(add GR64:$src1, 0x0000000080000000),
-          (SUB64ri32 GR64:$src1, 0xffffffff80000000)>;
-def : Pat<(store (add (loadi64 addr:$dst), 0x0000000080000000), addr:$dst),
-          (SUB64mi32 addr:$dst, 0xffffffff80000000)>;
-def : Pat<(X86add_flag_nocf GR64:$src1, 0x0000000080000000),
-          (SUB64ri32 GR64:$src1, 0xffffffff80000000)>;
 
 // To avoid needing to materialize an immediate in a register, use a 32-bit and
 // with implicit zero-extension instead of a 64-bit and if the immediate has at
@@ -1789,24 +1834,47 @@ let Predicates = [HasNDD] in {
 // Shift amount is implicitly masked.
 multiclass MaskedShiftAmountPats<SDNode frag> {
   // (shift x (and y, 31)) ==> (shift x, y)
-  def : Pat<(frag GR8:$src1, (shiftMask32 CL)),
-            (!cast<Instruction>(NAME # "8rCL") GR8:$src1)>;
-  def : Pat<(frag GR16:$src1, (shiftMask32 CL)),
-            (!cast<Instruction>(NAME # "16rCL") GR16:$src1)>;
-  def : Pat<(frag GR32:$src1, (shiftMask32 CL)),
-            (!cast<Instruction>(NAME # "32rCL") GR32:$src1)>;
+  // (shift x (and y, 63)) ==> (shift x, y)
+  let Predicates = [NoNDD] in {
+    def : Pat<(frag GR8:$src1, (shiftMask32 CL)),
+              (!cast<Instruction>(NAME # "8rCL") GR8:$src1)>;
+    def : Pat<(frag GR16:$src1, (shiftMask32 CL)),
+              (!cast<Instruction>(NAME # "16rCL") GR16:$src1)>;
+    def : Pat<(frag GR32:$src1, (shiftMask32 CL)),
+              (!cast<Instruction>(NAME # "32rCL") GR32:$src1)>;
+    def : Pat<(frag GR64:$src1, (shiftMask64 CL)),
+              (!cast<Instruction>(NAME # "64rCL") GR64:$src1)>;
+  }
+  let Predicates = [HasNDD] in {
+    def : Pat<(frag GR8:$src1, (shiftMask32 CL)),
+              (!cast<Instruction>(NAME # "8rCL_ND") GR8:$src1)>;
+    def : Pat<(frag GR16:$src1, (shiftMask32 CL)),
+              (!cast<Instruction>(NAME # "16rCL_ND") GR16:$src1)>;
+    def : Pat<(frag GR32:$src1, (shiftMask32 CL)),
+              (!cast<Instruction>(NAME # "32rCL_ND") GR32:$src1)>;
+    def : Pat<(frag GR64:$src1, (shiftMask64 CL)),
+              (!cast<Instruction>(NAME # "64rCL_ND") GR64:$src1)>;
+  }
+
   def : Pat<(store (frag (loadi8 addr:$dst), (shiftMask32 CL)), addr:$dst),
             (!cast<Instruction>(NAME # "8mCL") addr:$dst)>;
   def : Pat<(store (frag (loadi16 addr:$dst), (shiftMask32 CL)), addr:$dst),
             (!cast<Instruction>(NAME # "16mCL") addr:$dst)>;
   def : Pat<(store (frag (loadi32 addr:$dst), (shiftMask32 CL)), addr:$dst),
             (!cast<Instruction>(NAME # "32mCL") addr:$dst)>;
-
-  // (shift x (and y, 63)) ==> (shift x, y)
-  def : Pat<(frag GR64:$src1, (shiftMask64 CL)),
-            (!cast<Instruction>(NAME # "64rCL") GR64:$src1)>;
   def : Pat<(store (frag (loadi64 addr:$dst), (shiftMask64 CL)), addr:$dst),
             (!cast<Instruction>(NAME # "64mCL") addr:$dst)>;
+
+  let Predicates = [HasNDD] in {
+    def : Pat<(frag (loadi8 addr:$src), (shiftMask32 CL)),
+              (!cast<Instruction>(NAME # "8mCL_ND") addr:$src)>;
+    def : Pat<(frag (loadi16 addr:$src), (shiftMask32 CL)),
+              (!cast<Instruction>(NAME # "16mCL_ND") addr:$src)>;
+    def : Pat<(frag (loadi32 addr:$src), (shiftMask32 CL)),
+              (!cast<Instruction>(NAME # "32mCL_ND") addr:$src)>;
+    def : Pat<(frag (loadi64 addr:$src), (shiftMask64 CL)),
+              (!cast<Instruction>(NAME # "64mCL_ND") addr:$src)>;
+  }
 }
 
 defm SHL : MaskedShiftAmountPats<shl>;
@@ -1821,47 +1889,76 @@ defm SAR : MaskedShiftAmountPats<sra>;
 // not tracking flags for these nodes.
 multiclass MaskedRotateAmountPats<SDNode frag> {
   // (rot x (and y, BitWidth - 1)) ==> (rot x, y)
-  def : Pat<(frag GR8:$src1, (shiftMask8 CL)),
-            (!cast<Instruction>(NAME # "8rCL") GR8:$src1)>;
-  def : Pat<(frag GR16:$src1, (shiftMask16 CL)),
-            (!cast<Instruction>(NAME # "16rCL") GR16:$src1)>;
-  def : Pat<(frag GR32:$src1, (shiftMask32 CL)),
-            (!cast<Instruction>(NAME # "32rCL") GR32:$src1)>;
+  let Predicates = [NoNDD] in {
+    def : Pat<(frag GR8:$src1, (shiftMask8 CL)),
+              (!cast<Instruction>(NAME # "8rCL") GR8:$src1)>;
+    def : Pat<(frag GR16:$src1, (shiftMask16 CL)),
+              (!cast<Instruction>(NAME # "16rCL") GR16:$src1)>;
+    def : Pat<(frag GR32:$src1, (shiftMask32 CL)),
+              (!cast<Instruction>(NAME # "32rCL") GR32:$src1)>;
+    def : Pat<(frag GR64:$src1, (shiftMask64 CL)),
+              (!cast<Instruction>(NAME # "64rCL") GR64:$src1)>;
+  }
+  let Predicates = [HasNDD] in {
+    def : Pat<(frag GR8:$src1, (shiftMask8 CL)),
+              (!cast<Instruction>(NAME # "8rCL_ND") GR8:$src1)>;
+    def : Pat<(frag GR16:$src1, (shiftMask16 CL)),
+              (!cast<Instruction>(NAME # "16rCL_ND") GR16:$src1)>;
+    def : Pat<(frag GR32:$src1, (shiftMask32 CL)),
+              (!cast<Instruction>(NAME # "32rCL_ND") GR32:$src1)>;
+    def : Pat<(frag GR64:$src1, (shiftMask64 CL)),
+              (!cast<Instruction>(NAME # "64rCL_ND") GR64:$src1)>;
+  }
+
   def : Pat<(store (frag (loadi8 addr:$dst), (shiftMask8 CL)), addr:$dst),
             (!cast<Instruction>(NAME # "8mCL") addr:$dst)>;
   def : Pat<(store (frag (loadi16 addr:$dst), (shiftMask16 CL)), addr:$dst),
             (!cast<Instruction>(NAME # "16mCL") addr:$dst)>;
   def : Pat<(store (frag (loadi32 addr:$dst), (shiftMask32 CL)), addr:$dst),
             (!cast<Instruction>(NAME # "32mCL") addr:$dst)>;
-
-  // (rot x (and y, 63)) ==> (rot x, y)
-  def : Pat<(frag GR64:$src1, (shiftMask64 CL)),
-            (!cast<Instruction>(NAME # "64rCL") GR64:$src1)>;
   def : Pat<(store (frag (loadi64 addr:$dst), (shiftMask64 CL)), addr:$dst),
             (!cast<Instruction>(NAME # "64mCL") addr:$dst)>;
+
+  let Predicates = [HasNDD] in {
+    def : Pat<(frag (loadi8 addr:$src), (shiftMask8 CL)),
+              (!cast<Instruction>(NAME # "8mCL_ND") addr:$src)>;
+    def : Pat<(frag (loadi16 addr:$src), (shiftMask16 CL)),
+              (!cast<Instruction>(NAME # "16mCL_ND") addr:$src)>;
+    def : Pat<(frag (loadi32 addr:$src), (shiftMask32 CL)),
+              (!cast<Instruction>(NAME # "32mCL_ND") addr:$src)>;
+    def : Pat<(frag (loadi64 addr:$src), (shiftMask64 CL)),
+              (!cast<Instruction>(NAME # "64mCL_ND") addr:$src)>;
+  }
 }
 
 defm ROL : MaskedRotateAmountPats<rotl>;
 defm ROR : MaskedRotateAmountPats<rotr>;
 
-// Double "funnel" shift amount is implicitly masked.
-// (fshl/fshr x (and y, 31)) ==> (fshl/fshr x, y) (NOTE: modulo32)
-def : Pat<(X86fshl GR16:$src1, GR16:$src2, (shiftMask32 CL)),
-          (SHLD16rrCL GR16:$src1, GR16:$src2)>;
-def : Pat<(X86fshr GR16:$src2, GR16:$src1, (shiftMask32 CL)),
-          (SHRD16rrCL GR16:$src1, GR16:$src2)>;
+multiclass MaskedShlrdAmountPats<string suffix, Predicate p> {
+  let Predicates = [p] in {
+    // Double "funnel" shift amount is implicitly masked.
+    // (fshl/fshr x (and y, 31)) ==> (fshl/fshr x, y) (NOTE: modulo32)
+    def : Pat<(X86fshl GR16:$src1, GR16:$src2, (shiftMask32 CL)),
+              (!cast<Instruction>(SHLD16rrCL#suffix) GR16:$src1, GR16:$src2)>;
+    def : Pat<(X86fshr GR16:$src2, GR16:$src1, (shiftMask32 CL)),
+              (!cast<Instruction>(SHRD16rrCL#suffix) GR16:$src1, GR16:$src2)>;
 
-// (fshl/fshr x (and y, 31)) ==> (fshl/fshr x, y)
-def : Pat<(fshl GR32:$src1, GR32:$src2, (shiftMask32 CL)),
-          (SHLD32rrCL GR32:$src1, GR32:$src2)>;
-def : Pat<(fshr GR32:$src2, GR32:$src1, (shiftMask32 CL)),
-          (SHRD32rrCL GR32:$src1, GR32:$src2)>;
+    // (fshl/fshr x (and y, 31)) ==> (fshl/fshr x, y)
+    def : Pat<(fshl GR32:$src1, GR32:$src2, (shiftMask32 CL)),
+              (!cast<Instruction>(SHLD32rrCL#suffix) GR32:$src1, GR32:$src2)>;
+    def : Pat<(fshr GR32:$src2, GR32:$src1, (shiftMask32 CL)),
+              (!cast<Instruction>(SHRD32rrCL#suffix) GR32:$src1, GR32:$src2)>;
 
-// (fshl/fshr x (and y, 63)) ==> (fshl/fshr x, y)
-def : Pat<(fshl GR64:$src1, GR64:$src2, (shiftMask64 CL)),
-          (SHLD64rrCL GR64:$src1, GR64:$src2)>;
-def : Pat<(fshr GR64:$src2, GR64:$src1, (shiftMask64 CL)),
-          (SHRD64rrCL GR64:$src1, GR64:$src2)>;
+    // (fshl/fshr x (and y, 63)) ==> (fshl/fshr x, y)
+    def : Pat<(fshl GR64:$src1, GR64:$src2, (shiftMask64 CL)),
+              (!cast<Instruction>(SHLD64rrCL#suffix) GR64:$src1, GR64:$src2)>;
+    def : Pat<(fshr GR64:$src2, GR64:$src1, (shiftMask64 CL)),
+              (!cast<Instruction>(SHRD64rrCL#suffix) GR64:$src1, GR64:$src2)>;
+  }
+}
+
+defm : MaskedShlrdAmountPats<"", NoNDD>;
+defm : MaskedShlrdAmountPats<"_ND", HasNDD>;
 
 // Use BTR/BTS/BTC for clearing/setting/toggling a bit in a variable location.
 multiclass OneBitPats<RegisterClass rc, ValueType vt, Instruction btr,
@@ -2064,6 +2161,11 @@ multiclass EFLAGSDefiningPats<string suffix, Predicate p> {
     def : Pat<(X86sub_flag_nocf GR16:$src, -1), (!cast<Instruction>(INC16r#suffix) GR16:$src)>;
     def : Pat<(X86sub_flag_nocf GR32:$src, -1), (!cast<Instruction>(INC32r#suffix) GR32:$src)>;
     def : Pat<(X86sub_flag_nocf GR64:$src, -1), (!cast<Instruction>(INC64r#suffix) GR64:$src)>;
+
+    def : Pat<(or_is_add GR8:$src, 1),   (!cast<Instruction>(INC8r#suffix) GR8:$src)>;
+    def : Pat<(or_is_add GR16:$src, 1),  (!cast<Instruction>(INC16r#suffix) GR16:$src)>;
+    def : Pat<(or_is_add GR32:$src, 1),  (!cast<Instruction>(INC32r#suffix) GR32:$src)>;
+    def : Pat<(or_is_add GR64:$src, 1),  (!cast<Instruction>(INC64r#suffix) GR64:$src)>;
   }
 }
 

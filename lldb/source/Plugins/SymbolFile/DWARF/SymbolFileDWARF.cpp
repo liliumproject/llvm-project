@@ -693,6 +693,7 @@ llvm::DWARFDebugAbbrev *SymbolFileDWARF::DebugAbbrev() {
   if (debug_abbrev_data.GetByteSize() == 0)
     return nullptr;
 
+  ElapsedTime elapsed(m_parse_time);
   auto abbr =
       std::make_unique<llvm::DWARFDebugAbbrev>(debug_abbrev_data.GetAsLLVM());
   llvm::Error error = abbr->parse();
@@ -722,8 +723,8 @@ DWARFCompileUnit *SymbolFileDWARF::GetDWARFCompileUnit(CompileUnit *comp_unit) {
 
   // The compile unit ID is the index of the DWARF unit.
   DWARFUnit *dwarf_cu = DebugInfo().GetUnitAtIndex(comp_unit->GetID());
-  if (dwarf_cu && dwarf_cu->GetUserData() == nullptr)
-    dwarf_cu->SetUserData(comp_unit);
+  if (dwarf_cu && dwarf_cu->GetLLDBCompUnit() == nullptr)
+    dwarf_cu->SetLLDBCompUnit(comp_unit);
 
   // It must be DWARFCompileUnit when it created a CompileUnit.
   return llvm::cast_or_null<DWARFCompileUnit>(dwarf_cu);
@@ -771,7 +772,7 @@ static const char *GetDWOName(DWARFCompileUnit &dwarf_cu,
 
 lldb::CompUnitSP SymbolFileDWARF::ParseCompileUnit(DWARFCompileUnit &dwarf_cu) {
   CompUnitSP cu_sp;
-  CompileUnit *comp_unit = (CompileUnit *)dwarf_cu.GetUserData();
+  CompileUnit *comp_unit = dwarf_cu.GetLLDBCompUnit();
   if (comp_unit) {
     // We already parsed this compile unit, had out a shared pointer to it
     cu_sp = comp_unit->shared_from_this();
@@ -779,7 +780,7 @@ lldb::CompUnitSP SymbolFileDWARF::ParseCompileUnit(DWARFCompileUnit &dwarf_cu) {
     if (GetDebugMapSymfile()) {
       // Let the debug map create the compile unit
       cu_sp = m_debug_map_symfile->GetCompileUnit(this, dwarf_cu);
-      dwarf_cu.SetUserData(cu_sp.get());
+      dwarf_cu.SetLLDBCompUnit(cu_sp.get());
     } else {
       ModuleSP module_sp(m_objfile_sp->GetModule());
       if (module_sp) {
@@ -792,7 +793,7 @@ lldb::CompUnitSP SymbolFileDWARF::ParseCompileUnit(DWARFCompileUnit &dwarf_cu) {
               *GetDWARFUnitIndex(dwarf_cu.GetID()), cu_language,
               eLazyBoolCalculate, std::move(support_files));
 
-          dwarf_cu.SetUserData(cu_sp.get());
+          dwarf_cu.SetLLDBCompUnit(cu_sp.get());
 
           SetCompileUnitAtIndex(dwarf_cu.GetID(), cu_sp);
         };
@@ -1554,8 +1555,10 @@ Type *SymbolFileDWARF::ResolveTypeUID(const DWARFDIE &die,
     Log *log = GetLog(DWARFLog::DebugInfo);
     if (log)
       GetObjectFile()->GetModule()->LogMessage(
-          log, "SymbolFileDWARF::ResolveTypeUID (die = {0:x16}) {1} '{2}'",
-          die.GetOffset(), die.GetTagAsCString(), die.GetName());
+          log,
+          "SymbolFileDWARF::ResolveTypeUID (die = {0:x16}) {1} ({2}) '{3}'",
+          die.GetOffset(), DW_TAG_value_to_name(die.Tag()), die.Tag(),
+          die.GetName());
 
     // We might be coming in in the middle of a type tree (a class within a
     // class, an enum within a class), so parse any needed parent DIEs before
@@ -1571,11 +1574,10 @@ Type *SymbolFileDWARF::ResolveTypeUID(const DWARFDIE &die,
           if (log)
             GetObjectFile()->GetModule()->LogMessage(
                 log,
-                "SymbolFileDWARF::ResolveTypeUID (die = {0:x16}) "
-                "{1} '{2}' "
-                "resolve parent forward type for {3:x16})",
-                die.GetOffset(), die.GetTagAsCString(), die.GetName(),
-                decl_ctx_die.GetOffset());
+                "SymbolFileDWARF::ResolveTypeUID (die = {0:x16}) {1} ({2}) "
+                "'{3}' resolve parent forward type for {4:x16})",
+                die.GetOffset(), DW_TAG_value_to_name(die.Tag()), die.Tag(),
+                die.GetName(), decl_ctx_die.GetOffset());
         } break;
 
         default:
@@ -1643,9 +1645,9 @@ bool SymbolFileDWARF::CompleteType(CompilerType &compiler_type) {
     Log *log = GetLog(DWARFLog::DebugInfo | DWARFLog::TypeCompletion);
     if (log)
       GetObjectFile()->GetModule()->LogMessageVerboseBacktrace(
-          log, "{0:x8}: {1} '{2}' resolving forward declaration...",
-          dwarf_die.GetID(), dwarf_die.GetTagAsCString(),
-          type->GetName().AsCString());
+          log, "{0:x8}: {1} ({2}) '{3}' resolving forward declaration...",
+          dwarf_die.GetID(), DW_TAG_value_to_name(dwarf_die.Tag()),
+          dwarf_die.Tag(), type->GetName().AsCString());
     assert(compiler_type);
     if (DWARFASTParser *dwarf_ast = GetDWARFParser(*dwarf_die.GetCU()))
       return dwarf_ast->CompleteTypeFromDWARF(dwarf_die, type, compiler_type);
@@ -1664,8 +1666,9 @@ Type *SymbolFileDWARF::ResolveType(const DWARFDIE &die,
         return type;
 
       GetObjectFile()->GetModule()->ReportError(
-          "Parsing a die that is being parsed die: {0:x16}: {1} {2}",
-          die.GetOffset(), die.GetTagAsCString(), die.GetName());
+          "Parsing a die that is being parsed die: {0:x16}: {1} ({2}) {3}",
+          die.GetOffset(), DW_TAG_value_to_name(die.Tag()), die.Tag(),
+          die.GetName());
 
     } else
       return type;
@@ -1675,20 +1678,20 @@ Type *SymbolFileDWARF::ResolveType(const DWARFDIE &die,
 
 CompileUnit *
 SymbolFileDWARF::GetCompUnitForDWARFCompUnit(DWARFCompileUnit &dwarf_cu) {
+
   if (dwarf_cu.IsDWOUnit()) {
-    DWARFCompileUnit *non_dwo_cu =
-        static_cast<DWARFCompileUnit *>(dwarf_cu.GetUserData());
+    DWARFCompileUnit *non_dwo_cu = dwarf_cu.GetSkeletonUnit();
     assert(non_dwo_cu);
     return non_dwo_cu->GetSymbolFileDWARF().GetCompUnitForDWARFCompUnit(
         *non_dwo_cu);
   }
   // Check if the symbol vendor already knows about this compile unit?
-  if (dwarf_cu.GetUserData() == nullptr) {
-    // The symbol vendor doesn't know about this compile unit, we need to parse
-    // and add it to the symbol vendor object.
-    return ParseCompileUnit(dwarf_cu).get();
-  }
-  return static_cast<CompileUnit *>(dwarf_cu.GetUserData());
+  CompileUnit *lldb_cu = dwarf_cu.GetLLDBCompUnit();
+  if (lldb_cu)
+    return lldb_cu;
+  // The symbol vendor doesn't know about this compile unit, we need to parse
+  // and add it to the symbol vendor object.
+  return ParseCompileUnit(dwarf_cu).get();
 }
 
 void SymbolFileDWARF::GetObjCMethods(
@@ -1750,7 +1753,7 @@ SymbolFileDWARF::GetDIE(const DIERef &die_ref) {
     }
 
     if (*file_index == DIERef::k_file_index_mask)
-      symbol_file = m_dwp_symfile.get(); // DWP case
+      symbol_file = GetDwpSymbolFile().get(); // DWP case
     else
       symbol_file = this->DebugInfo()
                         .GetUnitAtIndex(*die_ref.file_index())
@@ -1783,6 +1786,10 @@ std::optional<uint64_t> SymbolFileDWARF::GetDWOId() {
           return ::GetDWOId(*cu, *cu_die);
   }
   return {};
+}
+
+DWARFUnit *SymbolFileDWARF::GetSkeletonUnit(DWARFUnit *dwo_unit) {
+  return DebugInfo().GetSkeletonUnit(dwo_unit);
 }
 
 std::shared_ptr<SymbolFileDWARFDwo>
@@ -2667,6 +2674,29 @@ static bool UpdateCompilerContextForSimpleTemplateNames(TypeQuery &match) {
   }
   return any_context_updated;
 }
+
+uint64_t SymbolFileDWARF::GetDebugInfoSize(bool load_all_debug_info) {
+  DWARFDebugInfo &info = DebugInfo();
+  uint32_t num_comp_units = info.GetNumUnits();
+
+  uint64_t debug_info_size = SymbolFileCommon::GetDebugInfoSize();
+  // In dwp scenario, debug info == skeleton debug info + dwp debug info.
+  if (std::shared_ptr<SymbolFileDWARFDwo> dwp_sp = GetDwpSymbolFile())
+    return debug_info_size + dwp_sp->GetDebugInfoSize();
+
+  // In dwo scenario, debug info == skeleton debug info + all dwo debug info.
+  for (uint32_t i = 0; i < num_comp_units; i++) {
+    DWARFUnit *cu = info.GetUnitAtIndex(i);
+    if (cu == nullptr)
+      continue;
+
+    SymbolFileDWARFDwo *dwo = cu->GetDwoSymbolFile(load_all_debug_info);
+    if (dwo)
+      debug_info_size += dwo->GetDebugInfoSize();
+  }
+  return debug_info_size;
+}
+
 void SymbolFileDWARF::FindTypes(const TypeQuery &query, TypeResults &results) {
 
   // Make sure we haven't already searched this SymbolFile before.
@@ -3106,9 +3136,9 @@ SymbolFileDWARF::FindDefinitionTypeForDWARFDeclContext(const DWARFDIE &die) {
     if (log) {
       GetObjectFile()->GetModule()->LogMessage(
           log,
-          "SymbolFileDWARF::FindDefinitionTypeForDWARFDeclContext(tag={0}, "
-          "name='{1}')",
-          DW_TAG_value_to_name(tag), die.GetName());
+          "SymbolFileDWARF::FindDefinitionTypeForDWARFDeclContext(tag={0} "
+          "({1}), name='{2}')",
+          DW_TAG_value_to_name(tag), tag, die.GetName());
     }
 
     // Get the type system that we are looking to find a type for. We will
@@ -3156,10 +3186,10 @@ SymbolFileDWARF::FindDefinitionTypeForDWARFDeclContext(const DWARFDIE &die) {
           GetObjectFile()->GetModule()->LogMessage(
               log,
               "SymbolFileDWARF::"
-              "FindDefinitionTypeForDWARFDeclContext(tag={0}, "
-              "name='{1}') ignoring die={2:x16} ({3})",
-              DW_TAG_value_to_name(tag), die.GetName(), type_die.GetOffset(),
-              type_die.GetName());
+              "FindDefinitionTypeForDWARFDeclContext(tag={0} ({1}), "
+              "name='{2}') ignoring die={3:x16} ({4})",
+              DW_TAG_value_to_name(tag), tag, die.GetName(),
+              type_die.GetOffset(), type_die.GetName());
         }
         return true;
       }
@@ -3169,9 +3199,9 @@ SymbolFileDWARF::FindDefinitionTypeForDWARFDeclContext(const DWARFDIE &die) {
         GetObjectFile()->GetModule()->LogMessage(
             log,
             "SymbolFileDWARF::"
-            "FindDefinitionTypeForDWARFDeclContext(tag={0}, "
-            "name='{1}') trying die={2:x16} ({3})",
-            DW_TAG_value_to_name(tag), die.GetName(), type_die.GetOffset(),
+            "FindDefinitionTypeForDWARFDeclContext(tag={0} ({1}), name='{2}') "
+            "trying die={3:x16} ({4})",
+            DW_TAG_value_to_name(tag), tag, die.GetName(), type_die.GetOffset(),
             type_dwarf_decl_ctx.GetQualifiedName());
       }
 
@@ -3392,8 +3422,8 @@ static DWARFExpressionList GetExprListFromAtLocation(DWARFFormValue form_value,
   if (DWARFFormValue::IsBlockForm(form_value.Form())) {
     const DWARFDataExtractor &data = die.GetData();
 
-    uint32_t block_offset = form_value.BlockData() - data.GetDataStart();
-    uint32_t block_length = form_value.Unsigned();
+    uint64_t block_offset = form_value.BlockData() - data.GetDataStart();
+    uint64_t block_length = form_value.Unsigned();
     return DWARFExpressionList(
         module, DataExtractor(data, block_offset, block_length), die.GetCU());
   }
@@ -3422,9 +3452,9 @@ GetExprListFromAtConstValue(DWARFFormValue form_value, ModuleSP module,
   const DWARFDataExtractor &debug_info_data = die.GetData();
   if (DWARFFormValue::IsBlockForm(form_value.Form())) {
     // Retrieve the value as a block expression.
-    uint32_t block_offset =
+    uint64_t block_offset =
         form_value.BlockData() - debug_info_data.GetDataStart();
-    uint32_t block_length = form_value.Unsigned();
+    uint64_t block_length = form_value.Unsigned();
     return DWARFExpressionList(
         module, DataExtractor(debug_info_data, block_offset, block_length),
         die.GetCU());
@@ -3622,8 +3652,8 @@ VariableSP SymbolFileDWARF::ParseVariableDIE(const SymbolContext &sc,
         StreamString strm;
         location->DumpLocation(&strm, eDescriptionLevelFull, nullptr);
         GetObjectFile()->GetModule()->ReportError(
-            "{0:x16}: {1} has an invalid location: {2}", die.GetOffset(),
-            die.GetTagAsCString(), strm.GetData());
+            "{0:x16}: {1} ({2}) has an invalid location: {3}", die.GetOffset(),
+            DW_TAG_value_to_name(die.Tag()), die.Tag(), strm.GetData());
       }
       if (location_DW_OP_addr != LLDB_INVALID_ADDRESS)
         is_static_lifetime = true;
@@ -3811,10 +3841,11 @@ void SymbolFileDWARF::ParseAndAppendGlobalVariable(
       variable_list_sp = sc.comp_unit->GetVariableList(false);
     } else {
       GetObjectFile()->GetModule()->ReportError(
-          "parent {0:x8} {1} with no valid compile unit in "
-          "symbol context for {2:x8} {3}.\n",
-          sc_parent_die.GetID(), sc_parent_die.GetTagAsCString(), die.GetID(),
-          die.GetTagAsCString());
+          "parent {0:x8} {1} ({2}) with no valid compile unit in "
+          "symbol context for {3:x8} {4} ({5}).\n",
+          sc_parent_die.GetID(), DW_TAG_value_to_name(sc_parent_die.Tag()),
+          sc_parent_die.Tag(), die.GetID(), DW_TAG_value_to_name(die.Tag()),
+          die.Tag());
       return;
     }
     break;
@@ -3822,8 +3853,8 @@ void SymbolFileDWARF::ParseAndAppendGlobalVariable(
   default:
     GetObjectFile()->GetModule()->ReportError(
         "didn't find appropriate parent DIE for variable list for {0:x8} "
-        "{1}.\n",
-        die.GetID(), die.GetTagAsCString());
+        "{1} ({2}).\n",
+        die.GetID(), DW_TAG_value_to_name(die.Tag()), die.Tag());
     return;
   }
 
@@ -4033,8 +4064,8 @@ CollectCallSiteParameters(ModuleSP module, DWARFDIE call_site_die) {
       if (!DWARFFormValue::IsBlockForm(form_value.Form()))
         return {};
       auto data = child.GetData();
-      uint32_t block_offset = form_value.BlockData() - data.GetDataStart();
-      uint32_t block_length = form_value.Unsigned();
+      uint64_t block_offset = form_value.BlockData() - data.GetDataStart();
+      uint64_t block_length = form_value.Unsigned();
       return DWARFExpressionList(
           module, DataExtractor(data, block_offset, block_length),
           child.GetCU());
@@ -4139,8 +4170,8 @@ SymbolFileDWARF::CollectCallEdges(ModuleSP module, DWARFDIE function_die) {
         }
 
         auto data = child.GetData();
-        uint32_t block_offset = form_value.BlockData() - data.GetDataStart();
-        uint32_t block_length = form_value.Unsigned();
+        uint64_t block_offset = form_value.BlockData() - data.GetDataStart();
+        uint64_t block_length = form_value.Unsigned();
         call_target = DWARFExpressionList(
             module, DataExtractor(data, block_offset, block_length),
             child.GetCU());
@@ -4322,26 +4353,59 @@ SymbolFileDWARFDebugMap *SymbolFileDWARF::GetDebugMapSymfile() {
 
 const std::shared_ptr<SymbolFileDWARFDwo> &SymbolFileDWARF::GetDwpSymbolFile() {
   llvm::call_once(m_dwp_symfile_once_flag, [this]() {
+    // Create a list of files to try and append .dwp to.
+    FileSpecList symfiles;
+    // Append the module's object file path.
+    const FileSpec module_fspec = m_objfile_sp->GetModule()->GetFileSpec();
+    symfiles.Append(module_fspec);
+    // Append the object file for this SymbolFile only if it is different from
+    // the module's file path. Our main module could be "a.out", our symbol file
+    // could be "a.debug" and our ".dwp" file might be "a.debug.dwp" instead of
+    // "a.out.dwp".
+    const FileSpec symfile_fspec(m_objfile_sp->GetFileSpec());
+    if (symfile_fspec != module_fspec) {
+      symfiles.Append(symfile_fspec);
+    } else {
+      // If we don't have a separate debug info file, then try stripping the
+      // extension. The main module could be "a.debug" and the .dwp file could
+      // be "a.dwp" instead of "a.debug.dwp".
+      ConstString filename_no_ext =
+          module_fspec.GetFileNameStrippingExtension();
+      if (filename_no_ext != module_fspec.GetFilename()) {
+        FileSpec module_spec_no_ext(module_fspec);
+        module_spec_no_ext.SetFilename(filename_no_ext);
+        symfiles.Append(module_spec_no_ext);
+      }
+    }
+    Log *log = GetLog(DWARFLog::SplitDwarf);
+    FileSpecList search_paths = Target::GetDefaultDebugFileSearchPaths();
     ModuleSpec module_spec;
     module_spec.GetFileSpec() = m_objfile_sp->GetFileSpec();
-    module_spec.GetSymbolFileSpec() =
-        FileSpec(m_objfile_sp->GetModule()->GetFileSpec().GetPath() + ".dwp");
-
-    module_spec.GetUUID() = m_objfile_sp->GetUUID();
-    FileSpecList search_paths = Target::GetDefaultDebugFileSearchPaths();
-    FileSpec dwp_filespec =
-        PluginManager::LocateExecutableSymbolFile(module_spec, search_paths);
-    if (FileSystem::Instance().Exists(dwp_filespec)) {
-      DataBufferSP dwp_file_data_sp;
-      lldb::offset_t dwp_file_data_offset = 0;
-      ObjectFileSP dwp_obj_file = ObjectFile::FindPlugin(
-          GetObjectFile()->GetModule(), &dwp_filespec, 0,
-          FileSystem::Instance().GetByteSize(dwp_filespec), dwp_file_data_sp,
-          dwp_file_data_offset);
-      if (!dwp_obj_file)
-        return;
-      m_dwp_symfile = std::make_shared<SymbolFileDWARFDwo>(
-          *this, dwp_obj_file, DIERef::k_file_index_mask);
+    for (const auto &symfile : symfiles.files()) {
+      module_spec.GetSymbolFileSpec() =
+          FileSpec(symfile.GetPath() + ".dwp", symfile.GetPathStyle());
+      LLDB_LOG(log, "Searching for DWP using: \"{0}\"",
+               module_spec.GetSymbolFileSpec());
+      FileSpec dwp_filespec =
+          PluginManager::LocateExecutableSymbolFile(module_spec, search_paths);
+      if (FileSystem::Instance().Exists(dwp_filespec)) {
+        LLDB_LOG(log, "Found DWP file: \"{0}\"", dwp_filespec);
+        DataBufferSP dwp_file_data_sp;
+        lldb::offset_t dwp_file_data_offset = 0;
+        ObjectFileSP dwp_obj_file = ObjectFile::FindPlugin(
+            GetObjectFile()->GetModule(), &dwp_filespec, 0,
+            FileSystem::Instance().GetByteSize(dwp_filespec), dwp_file_data_sp,
+            dwp_file_data_offset);
+        if (dwp_obj_file) {
+          m_dwp_symfile = std::make_shared<SymbolFileDWARFDwo>(
+              *this, dwp_obj_file, DIERef::k_file_index_mask);
+          break;
+        }
+      }
+    }
+    if (!m_dwp_symfile) {
+      LLDB_LOG(log, "Unable to locate for DWP file for: \"{0}\"",
+               m_objfile_sp->GetModule()->GetFileSpec());
     }
   });
   return m_dwp_symfile;

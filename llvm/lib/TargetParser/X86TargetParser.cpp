@@ -632,6 +632,7 @@ constexpr FeatureBitset ImpliedFeaturesPush2Pop2 = {};
 constexpr FeatureBitset ImpliedFeaturesPPX = {};
 constexpr FeatureBitset ImpliedFeaturesNDD = {};
 constexpr FeatureBitset ImpliedFeaturesCCMP = {};
+constexpr FeatureBitset ImpliedFeaturesNF = {};
 constexpr FeatureBitset ImpliedFeaturesCF = {};
 
 constexpr FeatureInfo FeatureInfos[X86::CPU_FEATURE_MAX] = {
@@ -750,13 +751,16 @@ unsigned llvm::X86::getFeaturePriority(ProcessorFeatures Feat) {
 #ifndef NDEBUG
   // Check that priorities are set properly in the .def file. We expect that
   // "compat" features are assigned non-duplicate consecutive priorities
-  // starting from zero (0, 1, ..., num_features - 1).
+  // starting from one (1, ..., 37) and multiple zeros.
 #define X86_FEATURE_COMPAT(ENUM, STR, PRIORITY) PRIORITY,
   unsigned Priorities[] = {
 #include "llvm/TargetParser/X86TargetParser.def"
   };
   std::array<unsigned, std::size(Priorities)> HelperList;
-  std::iota(HelperList.begin(), HelperList.end(), 0);
+  const size_t MaxPriority = 37;
+  std::iota(HelperList.begin(), HelperList.begin() + MaxPriority + 1, 0);
+  for (size_t i = MaxPriority + 1; i != std::size(Priorities); ++i)
+    HelperList[i] = 0;
   assert(std::is_permutation(HelperList.begin(), HelperList.end(),
                              std::begin(Priorities), std::end(Priorities)) &&
          "Priorities don't form consecutive range!");

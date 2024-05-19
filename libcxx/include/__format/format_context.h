@@ -10,7 +10,6 @@
 #ifndef _LIBCPP___FORMAT_FORMAT_CONTEXT_H
 #define _LIBCPP___FORMAT_FORMAT_CONTEXT_H
 
-#include <__availability>
 #include <__concepts/same_as.h>
 #include <__config>
 #include <__format/buffer.h>
@@ -18,7 +17,7 @@
 #include <__format/format_arg_store.h>
 #include <__format/format_args.h>
 #include <__format/format_error.h>
-#include <__format/format_fwd.h>
+#include <__fwd/format.h>
 #include <__iterator/back_insert_iterator.h>
 #include <__iterator/concepts.h>
 #include <__memory/addressof.h>
@@ -27,13 +26,16 @@
 #include <cstddef>
 
 #ifndef _LIBCPP_HAS_NO_LOCALIZATION
-#  include <locale>
+#  include <__locale>
 #  include <optional>
 #endif
 
 #if !defined(_LIBCPP_HAS_NO_PRAGMA_SYSTEM_HEADER)
 #  pragma GCC system_header
 #endif
+
+_LIBCPP_PUSH_MACROS
+#include <__undef_macros>
 
 _LIBCPP_BEGIN_NAMESPACE_STD
 
@@ -209,5 +211,7 @@ _LIBCPP_CTAD_SUPPORTED_FOR_TYPE(basic_format_context);
 #endif //_LIBCPP_STD_VER >= 20
 
 _LIBCPP_END_NAMESPACE_STD
+
+_LIBCPP_POP_MACROS
 
 #endif // _LIBCPP___FORMAT_FORMAT_CONTEXT_H

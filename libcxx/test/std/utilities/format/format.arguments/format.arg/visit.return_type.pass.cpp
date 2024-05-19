@@ -8,7 +8,7 @@
 // UNSUPPORTED: c++03, c++11, c++14, c++17, c++20, c++23
 // UNSUPPORTED: GCC-ALWAYS_INLINE-FIXME
 // The tested functionality needs deducing this.
-// UNSUPPORTED: clang-16 || clang-17
+// UNSUPPORTED: clang-17
 // XFAIL: apple-clang
 
 // <format>
@@ -130,9 +130,6 @@ void test() {
 
   test<Context, bool, std::string>(true, "visited");
   test<Context, bool, std::string>(false, "visited");
-
-  test<Context, bool, long>(true, 192812079084L);
-  test<Context, bool, long>(false, 192812079084L);
 
   // Test CharT types.
 
