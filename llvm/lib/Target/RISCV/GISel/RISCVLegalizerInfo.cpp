@@ -402,13 +402,20 @@ RISCVLegalizerInfo::RISCVLegalizerInfo(const RISCVSubtarget &ST)
                 typeIs(1, s32)(Query));
       });
 
-  getActionDefinitionsBuilder(G_FCMP)
-      .legalIf(all(typeIs(0, sXLen), typeIsScalarFPArith(1, ST)))
-      .clampScalar(0, sXLen, sXLen);
+  auto &FCmpActions = getActionDefinitionsBuilder(G_FCMP).legalIf(
+      all(typeIs(0, sXLen), typeIsScalarFPArith(1, ST)));
+  // TODO: Fold this into typeIsScalarFPArith.
+  if (ST.hasStdExtZfh())
+    FCmpActions.legalFor({sXLen, s16});
+  FCmpActions.clampScalar(0, sXLen, sXLen);
 
   // TODO: Support vector version of G_IS_FPCLASS.
-  getActionDefinitionsBuilder(G_IS_FPCLASS)
-      .customIf(all(typeIs(0, s1), typeIsScalarFPArith(1, ST)));
+  auto &FClassActions =
+      getActionDefinitionsBuilder(G_IS_FPCLASS)
+          .customIf(all(typeIs(0, s1), typeIsScalarFPArith(1, ST)));
+  // TODO: Fold this into typeIsScalarFPArith.
+  if (ST.hasStdExtZfh())
+    FClassActions.customFor({s1, s16});
 
   auto &FConstantActions = getActionDefinitionsBuilder(G_FCONSTANT)
                                .legalIf(typeIsScalarFPArith(0, ST));
@@ -416,16 +423,19 @@ RISCVLegalizerInfo::RISCVLegalizerInfo(const RISCVSubtarget &ST)
     FConstantActions.legalFor({s16});
   FConstantActions.lowerFor({s32, s64});
 
-  getActionDefinitionsBuilder({G_FPTOSI, G_FPTOUI})
-      .legalIf(all(typeInSet(0, {s32, sXLen}), typeIsScalarFPArith(1, ST)))
-      .widenScalarToNextPow2(0)
-      .clampScalar(0, s32, sXLen)
-      .libcall();
+  auto &FPToIActions =
+      getActionDefinitionsBuilder({G_FPTOSI, G_FPTOUI})
+          .legalIf(all(typeInSet(0, {s32, sXLen}), typeIsScalarFPArith(1, ST)));
+  if (ST.hasStdExtZfh())
+    FPToIActions.legalFor({{s32, s16}, {sXLen, s16}});
+  FPToIActions.widenScalarToNextPow2(0).clampScalar(0, s32, sXLen).libcall();
 
-  getActionDefinitionsBuilder({G_SITOFP, G_UITOFP})
-      .legalIf(all(typeIsScalarFPArith(0, ST), typeInSet(1, {s32, sXLen})))
-      .widenScalarToNextPow2(1)
-      .clampScalar(1, s32, sXLen);
+  auto &IToFPActions =
+      getActionDefinitionsBuilder({G_SITOFP, G_UITOFP})
+          .legalIf(all(typeIsScalarFPArith(0, ST), typeInSet(1, {s32, sXLen})));
+  if (ST.hasStdExtZfh())
+    IToFPActions.legalFor({{s16, s32}, {s16, sXLen}});
+  IToFPActions.widenScalarToNextPow2(1).clampScalar(1, s32, sXLen);
 
   // FIXME: We can do custom inline expansion like SelectionDAG.
   // FIXME: Legal with Zfa.
