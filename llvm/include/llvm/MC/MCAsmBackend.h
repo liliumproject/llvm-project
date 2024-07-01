@@ -165,9 +165,10 @@ public:
                                             const bool WasForced) const;
 
   /// Simple predicate for targets where !Resolved implies requiring relaxation
-  virtual bool fixupNeedsRelaxation(const MCFixup &Fixup, uint64_t Value,
-                                    const MCRelaxableFragment *DF,
-                                    const MCAsmLayout &Layout) const = 0;
+  virtual bool fixupNeedsRelaxation(const MCFixup &Fixup,
+                                    uint64_t Value) const {
+    llvm_unreachable("Needed if mayNeedRelaxation may return true");
+  }
 
   /// Relax the instruction in the given fragment to the next wider instruction.
   ///
