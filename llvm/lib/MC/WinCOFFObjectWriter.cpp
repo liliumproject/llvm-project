@@ -161,7 +161,7 @@ public:
                 DwoMode Mode);
 
   void reset();
-  void executePostLayoutBinding(MCAssembler &Asm, const MCAsmLayout &Layout);
+  void executePostLayoutBinding(MCAssembler &Asm);
   void recordRelocation(MCAssembler &Asm, const MCFragment *Fragment,
                         const MCFixup &Fixup, MCValue Target,
                         uint64_t &FixedValue);
@@ -172,7 +172,7 @@ private:
   COFFSymbol *GetOrCreateCOFFSymbol(const MCSymbol *Symbol);
   COFFSection *createSection(StringRef Name);
 
-  void defineSection(MCSectionCOFF const &Sec, const MCAsmLayout &Layout);
+  void defineSection(const MCAssembler &Asm, MCSectionCOFF const &Sec);
 
   COFFSymbol *getLinkedSymbol(const MCSymbol &Symbol);
   void DefineSymbol(const MCSymbol &Symbol, MCAssembler &Assembler,
@@ -223,8 +223,7 @@ public:
 
   // MCObjectWriter interface implementation.
   void reset() override;
-  void executePostLayoutBinding(MCAssembler &Asm,
-                                const MCAsmLayout &Layout) override;
+  void executePostLayoutBinding(MCAssembler &Asm) override;
   bool isSymbolRefDifferenceFullyResolvedImpl(const MCAssembler &Asm,
                                               const MCSymbol &SymA,
                                               const MCFragment &FB, bool InSet,
@@ -319,8 +318,8 @@ static uint32_t getAlignment(const MCSectionCOFF &Sec) {
 
 /// This function takes a section data object from the assembler
 /// and creates the associated COFF section staging object.
-void WinCOFFWriter::defineSection(const MCSectionCOFF &MCSec,
-                                  const MCAsmLayout &Layout) {
+void WinCOFFWriter::defineSection(const MCAssembler &Asm,
+                                  const MCSectionCOFF &MCSec) {
   COFFSection *Section = createSection(MCSec.getName());
   COFFSymbol *Symbol = createSymbol(MCSec.getName());
   Section->Symbol = Symbol;
@@ -355,8 +354,8 @@ void WinCOFFWriter::defineSection(const MCSectionCOFF &MCSec,
   if (UseOffsetLabels && !MCSec.empty()) {
     const uint32_t Interval = 1 << OffsetLabelIntervalBits;
     uint32_t N = 1;
-    for (uint32_t Off = Interval, E = Layout.getSectionAddressSize(&MCSec);
-         Off < E; Off += Interval) {
+    for (uint32_t Off = Interval, E = Asm.getSectionAddressSize(MCSec); Off < E;
+         Off += Interval) {
       auto Name = ("$L" + MCSec.getName() + "_" + Twine(N++)).str();
       COFFSymbol *Label = createSymbol(Name);
       Label->Section = Section;
@@ -776,7 +775,7 @@ void WinCOFFWriter::assignFileOffsets(MCAssembler &Asm,
     if (!Sec || Sec->Number == -1)
       continue;
 
-    Sec->Header.SizeOfRawData = Layout.getSectionAddressSize(&Section);
+    Sec->Header.SizeOfRawData = Asm.getSectionAddressSize(Section);
 
     if (IsPhysicalSection(Sec)) {
       Sec->Header.PointerToRawData = Offset;
@@ -834,15 +833,15 @@ void WinCOFFWriter::reset() {
   WeakDefaults.clear();
 }
 
-void WinCOFFWriter::executePostLayoutBinding(MCAssembler &Asm,
-                                             const MCAsmLayout &Layout) {
+void WinCOFFWriter::executePostLayoutBinding(MCAssembler &Asm) {
+  auto &Layout = *Asm.getLayout();
   // "Define" each section & symbol. This creates section & symbol
   // entries in the staging area.
   for (const auto &Section : Asm) {
     if ((Mode == NonDwoOnly && isDwoSection(Section)) ||
         (Mode == DwoOnly && !isDwoSection(Section)))
       continue;
-    defineSection(static_cast<const MCSectionCOFF &>(Section), Layout);
+    defineSection(Asm, static_cast<const MCSectionCOFF &>(Section));
   }
 
   if (Mode != DwoOnly)
@@ -1204,11 +1203,10 @@ bool WinCOFFObjectWriter::isSymbolRefDifferenceFullyResolvedImpl(
   return &SymA.getSection() == FB.getParent();
 }
 
-void WinCOFFObjectWriter::executePostLayoutBinding(MCAssembler &Asm,
-                                                   const MCAsmLayout &Layout) {
-  ObjWriter->executePostLayoutBinding(Asm, Layout);
+void WinCOFFObjectWriter::executePostLayoutBinding(MCAssembler &Asm) {
+  ObjWriter->executePostLayoutBinding(Asm);
   if (DwoWriter)
-    DwoWriter->executePostLayoutBinding(Asm, Layout);
+    DwoWriter->executePostLayoutBinding(Asm);
 }
 
 void WinCOFFObjectWriter::recordRelocation(MCAssembler &Asm,

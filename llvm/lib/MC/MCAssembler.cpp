@@ -204,8 +204,8 @@ bool MCAssembler::evaluateFixup(const MCFixup &Fixup, const MCFragment *DF,
                   MCFixupKindInfo::FKF_IsTarget;
 
   if (IsTarget)
-    return getBackend().evaluateTargetFixup(*this, *Layout, Fixup, DF, Target,
-                                            STI, Value, WasForced);
+    return getBackend().evaluateTargetFixup(*this, Fixup, DF, Target, STI,
+                                            Value, WasForced);
 
   unsigned FixupFlags = getBackendPtr()->getFixupKindInfo(Fixup.getKind()).Flags;
   bool IsPCRel = getBackendPtr()->getFixupKindInfo(Fixup.getKind()).Flags &
@@ -494,10 +494,6 @@ uint64_t MCAssembler::getFragmentOffset(const MCFragment &F) const {
   return F.Offset;
 }
 
-uint64_t MCAsmLayout::getFragmentOffset(const MCFragment *F) const {
-  return Assembler.getFragmentOffset(*F);
-}
-
 // Simple getSymbolOffset helper for the non-variable case.
 static bool getLabelOffset(const MCAssembler &Asm, const MCSymbol &S,
                            bool ReportError, uint64_t &Val) {
@@ -607,18 +603,12 @@ uint64_t MCAssembler::getSectionAddressSize(const MCSection &Sec) const {
   const MCFragment &F = *Sec.curFragList()->Tail;
   return getFragmentOffset(F) + computeFragmentSize(F);
 }
-uint64_t MCAsmLayout::getSectionAddressSize(const MCSection *Sec) const {
-  return Assembler.getSectionAddressSize(*Sec);
-}
 
 uint64_t MCAssembler::getSectionFileSize(const MCSection &Sec) const {
   // Virtual sections have no file size.
   if (Sec.isVirtualSection())
     return 0;
   return getSectionAddressSize(Sec);
-}
-uint64_t MCAsmLayout::getSectionFileSize(const MCSection *Sec) const {
-  return Assembler.getSectionFileSize(*Sec);
 }
 
 bool MCAssembler::registerSymbol(const MCSymbol &Symbol) {
@@ -1022,7 +1012,7 @@ void MCAssembler::layout(MCAsmLayout &Layout) {
 
   // Allow the object writer a chance to perform post-layout binding (for
   // example, to set the index fields in the symbol data).
-  getWriter().executePostLayoutBinding(*this, Layout);
+  getWriter().executePostLayoutBinding(*this);
 
   // Evaluate and apply the fixups, generating relocation entries as necessary.
   for (MCSection &Sec : *this) {

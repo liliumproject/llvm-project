@@ -297,8 +297,7 @@ private:
                         const MCFixup &Fixup, MCValue Target,
                         uint64_t &FixedValue) override;
 
-  void executePostLayoutBinding(MCAssembler &Asm,
-                                const MCAsmLayout &Layout) override;
+  void executePostLayoutBinding(MCAssembler &Asm) override;
   void prepareImports(SmallVectorImpl<wasm::WasmImport> &Imports,
                       MCAssembler &Asm, const MCAsmLayout &Layout);
   uint64_t writeObject(MCAssembler &Asm) override;
@@ -452,8 +451,7 @@ void WasmObjectWriter::writeHeader(const MCAssembler &Asm) {
   W->write<uint32_t>(wasm::WasmVersion);
 }
 
-void WasmObjectWriter::executePostLayoutBinding(MCAssembler &Asm,
-                                                const MCAsmLayout &Layout) {
+void WasmObjectWriter::executePostLayoutBinding(MCAssembler &Asm) {
   // Some compilation units require the indirect function table to be present
   // but don't explicitly reference it.  This is the case for call_indirect
   // without the reference-types feature, and also function bitcasts in all
@@ -1064,7 +1062,7 @@ uint32_t WasmObjectWriter::writeCodeSection(const MCAssembler &Asm,
   for (const WasmFunction &Func : Functions) {
     auto *FuncSection = static_cast<MCSectionWasm *>(Func.Section);
 
-    int64_t Size = Layout.getSectionAddressSize(FuncSection);
+    int64_t Size = Asm.getSectionAddressSize(*FuncSection);
     encodeULEB128(Size, W->OS);
     FuncSection->setSectionOffset(W->OS.tell() - Section.ContentsOffset);
     Asm.writeSectionData(W->OS, FuncSection);
