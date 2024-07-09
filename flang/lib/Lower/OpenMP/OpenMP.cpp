@@ -1976,7 +1976,43 @@ static void genCompositeDistributeSimd(
     semantics::SemanticsContext &semaCtx, lower::pft::Evaluation &eval,
     mlir::Location loc, const ConstructQueue &queue,
     ConstructQueue::iterator item, DataSharingProcessor &dsp) {
-  TODO(loc, "Composite DISTRIBUTE SIMD");
+  lower::StatementContext stmtCtx;
+
+  // Clause processing.
+  mlir::omp::DistributeClauseOps distributeClauseOps;
+  genDistributeClauses(converter, semaCtx, stmtCtx, item->clauses, loc,
+                       distributeClauseOps);
+
+  mlir::omp::SimdClauseOps simdClauseOps;
+  genSimdClauses(converter, semaCtx, item->clauses, loc, simdClauseOps);
+
+  mlir::omp::LoopNestClauseOps loopNestClauseOps;
+  llvm::SmallVector<const semantics::Symbol *> iv;
+  genLoopNestClauses(converter, semaCtx, eval, item->clauses, loc,
+                     loopNestClauseOps, iv);
+
+  // Operation creation.
+  // TODO: Populate entry block arguments with private variables.
+  auto distributeOp = genWrapperOp<mlir::omp::DistributeOp>(
+      converter, loc, distributeClauseOps, /*blockArgTypes=*/{});
+
+  // TODO: Populate entry block arguments with reduction and private variables.
+  auto simdOp = genWrapperOp<mlir::omp::SimdOp>(converter, loc, simdClauseOps,
+                                                /*blockArgTypes=*/{});
+
+  // Construct wrapper entry block list and associated symbols. It is important
+  // that the symbol order and the block argument order match, so that the
+  // symbol-value bindings created are correct.
+  // TODO: Add omp.distribute private and omp.simd private and reduction args.
+  auto wrapperArgs = llvm::to_vector(
+      llvm::concat<mlir::BlockArgument>(distributeOp.getRegion().getArguments(),
+                                        simdOp.getRegion().getArguments()));
+
+  assert(wrapperArgs.empty() &&
+         "Block args for omp.simd and omp.distribute currently not expected");
+  genLoopNestOp(converter, symTable, semaCtx, eval, loc, queue, item,
+                loopNestClauseOps, iv, /*wrapperSyms=*/{}, wrapperArgs,
+                llvm::omp::Directive::OMPD_distribute_simd, dsp);
 }
 
 static void genCompositeDoSimd(lower::AbstractConverter &converter,
@@ -1986,19 +2022,44 @@ static void genCompositeDoSimd(lower::AbstractConverter &converter,
                                const ConstructQueue &queue,
                                ConstructQueue::iterator item,
                                DataSharingProcessor &dsp) {
-  ClauseProcessor cp(converter, semaCtx, item->clauses);
-  cp.processTODO<clause::Aligned, clause::Allocate, clause::Linear,
-                 clause::Safelen, clause::Simdlen>(loc,
-                                                   llvm::omp::OMPD_do_simd);
-  // TODO: Add support for vectorization - add vectorization hints inside loop
-  // body.
-  // OpenMP standard does not specify the length of vector instructions.
-  // Currently we safely assume that for !$omp do simd pragma the SIMD length
-  // is equal to 1 (i.e. we generate standard workshare loop).
-  // When support for vectorization is enabled, then we need to add handling of
-  // if clause. Currently if clause can be skipped because we always assume
-  // SIMD length = 1.
-  genStandaloneDo(converter, symTable, semaCtx, eval, loc, queue, item, dsp);
+  lower::StatementContext stmtCtx;
+
+  // Clause processing.
+  mlir::omp::WsloopClauseOps wsloopClauseOps;
+  llvm::SmallVector<const semantics::Symbol *> wsloopReductionSyms;
+  llvm::SmallVector<mlir::Type> wsloopReductionTypes;
+  genWsloopClauses(converter, semaCtx, stmtCtx, item->clauses, loc,
+                   wsloopClauseOps, wsloopReductionTypes, wsloopReductionSyms);
+
+  mlir::omp::SimdClauseOps simdClauseOps;
+  genSimdClauses(converter, semaCtx, item->clauses, loc, simdClauseOps);
+
+  mlir::omp::LoopNestClauseOps loopNestClauseOps;
+  llvm::SmallVector<const semantics::Symbol *> iv;
+  genLoopNestClauses(converter, semaCtx, eval, item->clauses, loc,
+                     loopNestClauseOps, iv);
+
+  // Operation creation.
+  // TODO: Add private variables to entry block arguments.
+  auto wsloopOp = genWrapperOp<mlir::omp::WsloopOp>(
+      converter, loc, wsloopClauseOps, wsloopReductionTypes);
+
+  // TODO: Populate entry block arguments with reduction and private variables.
+  auto simdOp = genWrapperOp<mlir::omp::SimdOp>(converter, loc, simdClauseOps,
+                                                /*blockArgTypes=*/{});
+
+  // Construct wrapper entry block list and associated symbols. It is important
+  // that the symbol and block argument order match, so that the symbol-value
+  // bindings created are correct.
+  // TODO: Add omp.wsloop private and omp.simd private and reduction args.
+  auto wrapperArgs = llvm::to_vector(llvm::concat<mlir::BlockArgument>(
+      wsloopOp.getRegion().getArguments(), simdOp.getRegion().getArguments()));
+
+  assert(wsloopReductionSyms.size() == wrapperArgs.size() &&
+         "Number of symbols and wrapper block arguments must match");
+  genLoopNestOp(converter, symTable, semaCtx, eval, loc, queue, item,
+                loopNestClauseOps, iv, wsloopReductionSyms, wrapperArgs,
+                llvm::omp::Directive::OMPD_do_simd, dsp);
 }
 
 static void genCompositeTaskloopSimd(
