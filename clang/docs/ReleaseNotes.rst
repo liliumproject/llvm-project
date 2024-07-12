@@ -40,6 +40,8 @@ code bases.
 - Setting the deprecated CMake variable ``GCC_INSTALL_PREFIX`` (which sets the
   default ``--gcc-toolchain=``) now leads to a fatal error.
 
+- The ``le32`` and ``le64`` targets have been removed.
+
 C/C++ Language Potentially Breaking Changes
 -------------------------------------------
 
@@ -713,9 +715,6 @@ Improvements to Clang's diagnostics
 - For the ARM target, calling an interrupt handler from another function is now an error. #GH95359.
 
 - Clang now diagnoses integer constant expressions that are folded to a constant value as an extension in more circumstances. Fixes #GH59863
-
-- Clang now diagnoses missing format attributes for non-template functions and
-  class/struct/union members. Fixes #GH60718
 
 Improvements to Clang's time-trace
 ----------------------------------
