@@ -315,6 +315,7 @@ Resolutions to C++ Defect Reports
 
 - Clang now correctly implements lookup for the terminal name of a member-qualified nested-name-specifier.
   (`CWG1835: Dependent member lookup before < <https://cplusplus.github.io/CWG/issues/1835.html>`_).
+  The warning can be disabled via `-Wno-missing-dependent-template-keyword`.
 
 C Language Changes
 ------------------
@@ -1035,6 +1036,7 @@ Bug Fixes to C++ Support
 - Fixed a CTAD substitution bug involving type aliases that reference outer template parameters. (#GH94614).
 - Clang now correctly handles unexpanded packs in the template parameter list of a generic lambda expression
   (#GH48937)
+- Fix a crash when parsing an invalid type-requirement in a requires expression. (#GH51868)
 
 Bug Fixes to AST Handling
 ^^^^^^^^^^^^^^^^^^^^^^^^^
