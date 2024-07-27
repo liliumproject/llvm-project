@@ -313,9 +313,8 @@ void ScriptParser::readDefsym(StringRef name) {
 void ScriptParser::readNoCrossRefs(bool to) {
   expect("(");
   NoCrossRefCommand cmd{{}, to};
-  while (peek() != ")" && !atEOF())
-    cmd.outputSections.push_back(unquote(next()));
-  expect(")");
+  while (auto tok = till(")"))
+    cmd.outputSections.push_back(unquote(tok));
   if (cmd.outputSections.size() < 2)
     warn(getCurrentLocation() + ": ignored with fewer than 2 output sections");
   else
@@ -375,10 +374,9 @@ void ScriptParser::readAsNeeded() {
   expect("(");
   bool orig = config->asNeeded;
   config->asNeeded = true;
-  while (peek() != ")" && !atEOF())
-    addFile(unquote(next()));
+  while (auto tok = till(")"))
+    addFile(unquote(tok));
   config->asNeeded = orig;
-  expect(")");
 }
 
 void ScriptParser::readEntry() {
@@ -392,9 +390,8 @@ void ScriptParser::readEntry() {
 
 void ScriptParser::readExtern() {
   expect("(");
-  while (peek() != ")" && !atEOF())
-    config->undefined.push_back(unquote(next()));
-  expect(")");
+  while (auto tok = till(")"))
+    config->undefined.push_back(unquote(tok));
 }
 
 void ScriptParser::readGroup() {
@@ -427,13 +424,12 @@ void ScriptParser::readInclude() {
 
 void ScriptParser::readInput() {
   expect("(");
-  while (peek() != ")" && !atEOF()) {
-    if (consume("AS_NEEDED"))
+  while (auto tok = till(")")) {
+    if (tok == "AS_NEEDED")
       readAsNeeded();
     else
-      addFile(unquote(next()));
+      addFile(unquote(tok));
   }
-  expect(")");
 }
 
 void ScriptParser::readOutput() {
@@ -527,10 +523,9 @@ void ScriptParser::readOutputFormat() {
 
 void ScriptParser::readPhdrs() {
   expect("{");
-
-  while (!errorCount() && !consume("}")) {
+  while (auto tok = till("}")) {
     PhdrsCommand cmd;
-    cmd.name = next();
+    cmd.name = tok;
     cmd.type = readPhdrType();
 
     while (!errorCount() && !consume(";")) {
@@ -626,15 +621,14 @@ SmallVector<SectionCommand *, 0> ScriptParser::readOverlay() {
 
 void ScriptParser::readOverwriteSections() {
   expect("{");
-  while (!errorCount() && !consume("}"))
-    script->overwriteSections.push_back(readOutputSectionDescription(next()));
+  while (auto tok = till("}"))
+    script->overwriteSections.push_back(readOutputSectionDescription(tok));
 }
 
 void ScriptParser::readSections() {
   expect("{");
   SmallVector<SectionCommand *, 0> v;
-  while (!errorCount() && !consume("}")) {
-    StringRef tok = next();
+  while (auto tok = till("}")) {
     if (tok == "OVERLAY") {
       for (SectionCommand *cmd : readOverlay())
         v.push_back(cmd);
@@ -714,10 +708,8 @@ static int precedence(StringRef op) {
 
 StringMatcher ScriptParser::readFilePatterns() {
   StringMatcher Matcher;
-
-  while (peek() != ")" && !atEOF())
-    Matcher.addPattern(SingleStringMatcher(next()));
-  expect(")");
+  while (auto tok = till(")"))
+    Matcher.addPattern(SingleStringMatcher(tok));
   return Matcher;
 }
 
@@ -1005,8 +997,7 @@ OutputDesc *ScriptParser::readOutputSectionDescription(StringRef outSec) {
     osec->constraint = ConstraintKind::ReadWrite;
   expect("{");
 
-  while (!errorCount() && !consume("}")) {
-    StringRef tok = next();
+  while (auto tok = till("}")) {
     if (tok == ";") {
       // Empty commands are allowed. Do nothing here.
     } else if (SymbolAssignment *assign = readAssignment(tok)) {
@@ -1777,16 +1768,13 @@ SmallVector<SymbolVersion, 0> ScriptParser::readVersionExtern() {
   expect("{");
 
   SmallVector<SymbolVersion, 0> ret;
-  while (!errorCount() && peek() != "}") {
-    StringRef tok = next();
+  while (auto tok = till("}")) {
     ret.push_back(
-        {unquote(tok), isCXX, !tok.starts_with("\"") && hasWildcard(tok)});
+        {unquote(tok), isCXX, !tok.str.starts_with("\"") && hasWildcard(tok)});
     if (consume("}"))
       return ret;
     expect(";");
   }
-
-  expect("}");
   return ret;
 }
 
@@ -1806,8 +1794,7 @@ Expr ScriptParser::readMemoryAssignment(StringRef s1, StringRef s2,
 // MEMORY { name [(attr)] : ORIGIN = origin, LENGTH = len ... }
 void ScriptParser::readMemory() {
   expect("{");
-  while (!errorCount() && !consume("}")) {
-    StringRef tok = next();
+  while (auto tok = till("}")) {
     if (tok == "INCLUDE") {
       readInclude();
       continue;
