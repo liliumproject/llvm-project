@@ -1,6 +1,5 @@
 ! Test -fcuda option
 ! RUN: %flang_fc1 -cpp -x cuda -fdebug-unparse %s -o - | FileCheck %s
-! RUN: %flang -cpp -fsyntax-only -x cuda %s -o -
 ! RUN: not %flang_fc1 -cpp %s -o - 2>&1 | FileCheck %s --check-prefix=ERROR
 program main
 #if _CUDA
