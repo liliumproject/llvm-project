@@ -623,17 +623,17 @@ TEST(ParseArchString, RejectsConflictingExtensions) {
 
   for (StringRef Input : {"rv64i_xwchc"}) {
     EXPECT_EQ(toString(RISCVISAInfo::parseArchString(Input, true).takeError()),
-              "'Xwchc' is only supported for 'rv32'");
+              "'xwchc' is only supported for 'rv32'");
   }
 
   for (StringRef Input : {"rv32id_xwchc"}) {
     EXPECT_EQ(toString(RISCVISAInfo::parseArchString(Input, true).takeError()),
-              "'D' and 'Xwchc' extensions are incompatible");
+              "'d' and 'xwchc' extensions are incompatible");
   }
 
   for (StringRef Input : {"rv32i_zcb_xwchc"}) {
     EXPECT_EQ(toString(RISCVISAInfo::parseArchString(Input, true).takeError()),
-              "'Xwchc' and 'Zcb' extensions are incompatible");
+              "'xwchc' and 'zcb' extensions are incompatible");
   }
 }
 
@@ -660,37 +660,37 @@ TEST(ParseArchString, MissingDepency) {
 
   for (StringRef Input : {"rv32i_zvkb"}) {
     EXPECT_EQ(toString(RISCVISAInfo::parseArchString(Input, true).takeError()),
-              "'zvk*' requires 'v' or 'zve*' extension to also be specified");
+              "'zvkb' requires 'v' or 'zve*' extension to also be specified");
   }
 
   for (StringRef Input : {"rv32i_zvkg"}) {
     EXPECT_EQ(toString(RISCVISAInfo::parseArchString(Input, true).takeError()),
-              "'zvk*' requires 'v' or 'zve*' extension to also be specified");
+              "'zvkg' requires 'v' or 'zve*' extension to also be specified");
   }
 
   for (StringRef Input : {"rv32i_zvkgs0p7"}) {
     EXPECT_EQ(toString(RISCVISAInfo::parseArchString(Input, true).takeError()),
-              "'zvk*' requires 'v' or 'zve*' extension to also be specified");
+              "'zvkg' requires 'v' or 'zve*' extension to also be specified");
   }
 
   for (StringRef Input : {"rv32i_zvkned"}) {
     EXPECT_EQ(toString(RISCVISAInfo::parseArchString(Input, true).takeError()),
-              "'zvk*' requires 'v' or 'zve*' extension to also be specified");
+              "'zvkned' requires 'v' or 'zve*' extension to also be specified");
   }
 
   for (StringRef Input : {"rv32i_zvknha"}) {
     EXPECT_EQ(toString(RISCVISAInfo::parseArchString(Input, true).takeError()),
-              "'zvk*' requires 'v' or 'zve*' extension to also be specified");
+              "'zvknha' requires 'v' or 'zve*' extension to also be specified");
   }
 
   for (StringRef Input : {"rv32i_zvksed"}) {
     EXPECT_EQ(toString(RISCVISAInfo::parseArchString(Input, true).takeError()),
-              "'zvk*' requires 'v' or 'zve*' extension to also be specified");
+              "'zvksed' requires 'v' or 'zve*' extension to also be specified");
   }
 
   for (StringRef Input : {"rv32i_zvksh"}) {
     EXPECT_EQ(toString(RISCVISAInfo::parseArchString(Input, true).takeError()),
-              "'zvk*' requires 'v' or 'zve*' extension to also be specified");
+              "'zvksh' requires 'v' or 'zve*' extension to also be specified");
   }
 
   for (StringRef Input : {"rv32i_zvknhb"}) {
