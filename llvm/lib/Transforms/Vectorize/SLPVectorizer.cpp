@@ -10842,17 +10842,22 @@ InstructionCost BoUpSLP::getTreeCost(ArrayRef<Value *> VectorizedVals) {
     // Leave the scalar instructions as is if they are cheaper than extracts.
     if (Entry->Idx != 0 || Entry->getOpcode() == Instruction::GetElementPtr ||
         Entry->getOpcode() == Instruction::Load) {
+      // Checks if the user of the external scalar is phi in loop body.
+      auto IsPhiInLoop = [&](const ExternalUser &U) {
+        if (auto *Phi = dyn_cast_if_present<PHINode>(U.User)) {
+          auto *I = cast<Instruction>(U.Scalar);
+          const Loop *L = LI->getLoopFor(Phi->getParent());
+          return L && (Phi->getParent() == I->getParent() ||
+                       L == LI->getLoopFor(I->getParent()));
+        }
+        return false;
+      };
       if (!ValueToExtUses) {
         ValueToExtUses.emplace();
         for_each(enumerate(ExternalUses), [&](const auto &P) {
           // Ignore phis in loops.
-          if (auto *Phi = dyn_cast_if_present<PHINode>(P.value().User)) {
-            auto *I = cast<Instruction>(P.value().Scalar);
-            const Loop *L = LI->getLoopFor(Phi->getParent());
-            if (L && (Phi->getParent() == I->getParent() ||
-                      L == LI->getLoopFor(I->getParent())))
-              return;
-          }
+          if (IsPhiInLoop(P.value()))
+            return;
 
           ValueToExtUses->try_emplace(P.value().Scalar, P.index());
         });
@@ -10903,8 +10908,12 @@ InstructionCost BoUpSLP::getTreeCost(ArrayRef<Value *> VectorizedVals) {
             return ValueToExtUses->contains(V);
           });
           auto It = ExtractsCount.find(Entry);
-          if (It != ExtractsCount.end())
+          if (It != ExtractsCount.end()) {
+            assert(ScalarUsesCount >= It->getSecond().size() &&
+                   "Expected total number of external uses not less than "
+                   "number of scalar uses.");
             ScalarUsesCount -= It->getSecond().size();
+          }
           // Keep original scalar if number of externally used instructions in
           // the same entry is not power of 2. It may help to do some extra
           // vectorization for now.
@@ -10920,7 +10929,8 @@ InstructionCost BoUpSLP::getTreeCost(ArrayRef<Value *> VectorizedVals) {
             }
           });
           ExtraCost = ScalarCost;
-          ExtractsCount[Entry].insert(Inst);
+          if (!IsPhiInLoop(EU))
+            ExtractsCount[Entry].insert(Inst);
         }
       }
     }
@@ -17579,14 +17589,14 @@ public:
     // If there are a sufficient number of reduction values, reduce
     // to a nearby power-of-2. We can safely generate oversized
     // vectors and rely on the backend to split them to legal sizes.
-    unsigned NumReducedVals =
-        std::accumulate(ReducedVals.begin(), ReducedVals.end(), 0,
-                        [](unsigned Num, ArrayRef<Value *> Vals) -> unsigned {
-                          if (!isGoodForReduction(Vals))
-                            return Num;
-                          return Num + Vals.size();
-                        });
-    if (NumReducedVals < ReductionLimit &&
+    if (unsigned NumReducedVals = std::accumulate(
+            ReducedVals.begin(), ReducedVals.end(), 0,
+            [](unsigned Num, ArrayRef<Value *> Vals) -> unsigned {
+              if (!isGoodForReduction(Vals))
+                return Num;
+              return Num + Vals.size();
+            });
+        NumReducedVals < ReductionLimit &&
         (!AllowHorRdxIdenityOptimization ||
          all_of(ReducedVals, [](ArrayRef<Value *> RedV) {
            return RedV.size() < 2 || !allConstant(RedV) || !isSplat(RedV);
