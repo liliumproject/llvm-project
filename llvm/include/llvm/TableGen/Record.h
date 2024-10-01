@@ -226,8 +226,9 @@ public:
 ///
 /// The list of superclasses is non-redundant, i.e. only contains classes that
 /// are not the superclass of some other listed class.
-class RecordRecTy final : public RecTy, public FoldingSetNode,
-                          public TrailingObjects<RecordRecTy, Record *> {
+class RecordRecTy final : public RecTy,
+                          public FoldingSetNode,
+                          public TrailingObjects<RecordRecTy, const Record *> {
   friend class Record;
   friend detail::RecordKeeperImpl;
 
@@ -248,23 +249,23 @@ public:
   }
 
   /// Get the record type with the given non-redundant list of superclasses.
-  static RecordRecTy *get(RecordKeeper &RK, ArrayRef<Record *> Classes);
-  static RecordRecTy *get(Record *Class);
+  static RecordRecTy *get(RecordKeeper &RK, ArrayRef<const Record *> Classes);
+  static RecordRecTy *get(const Record *Class);
 
   void Profile(FoldingSetNodeID &ID) const;
 
-  ArrayRef<Record *> getClasses() const {
-    return ArrayRef(getTrailingObjects<Record *>(), NumClasses);
+  ArrayRef<const Record *> getClasses() const {
+    return ArrayRef(getTrailingObjects<const Record *>(), NumClasses);
   }
 
-  using const_record_iterator = Record * const *;
+  using const_record_iterator = const Record *const *;
 
   const_record_iterator classes_begin() const { return getClasses().begin(); }
   const_record_iterator classes_end() const { return getClasses().end(); }
 
   std::string getAsString() const override;
 
-  bool isSubClassOf(Record *Class) const;
+  bool isSubClassOf(const Record *Class) const;
   bool typeIsConvertibleTo(const RecTy *RHS) const override;
 
   bool typeIsA(const RecTy *RHS) const override;
@@ -603,6 +604,7 @@ public:
 
   Init *convertInitializerTo(RecTy *Ty) const override;
   Init *convertInitializerBitRange(ArrayRef<unsigned> Bits) const override;
+  std::optional<int64_t> convertInitializerToInt() const;
 
   bool isComplete() const override {
     for (unsigned i = 0; i != getNumBits(); ++i)
@@ -846,7 +848,8 @@ public:
     EMPTY,
     GETDAGOP,
     LOG2,
-    REPR
+    REPR,
+    LISTFLATTEN,
   };
 
 private:
@@ -1761,7 +1764,7 @@ public:
   bool hasDirectSuperClass(const Record *SuperClass) const;
 
   /// Append the direct superclasses of this record to Classes.
-  void getDirectSuperClasses(SmallVectorImpl<Record *> &Classes) const;
+  void getDirectSuperClasses(SmallVectorImpl<const Record *> &Classes) const;
 
   bool isTemplateArg(Init *Name) const {
     return llvm::is_contained(TemplateArgs, Name);
@@ -1912,6 +1915,9 @@ public:
   /// vector of records, throwing an exception if the field does not exist or
   /// if the value is not the right type.
   std::vector<Record*> getValueAsListOfDefs(StringRef FieldName) const;
+  // Temporary function to help staged migration to const Record pointers.
+  std::vector<const Record *>
+  getValueAsListOfConstDefs(StringRef FieldName) const;
 
   /// This method looks up the specified field and returns its value as a
   /// vector of integers, throwing an exception if the field does not exist or
@@ -2032,7 +2038,7 @@ public:
   }
 
   /// Start timing a phase. Automatically stops any previous phase timer.
-  void startTimer(StringRef Name);
+  void startTimer(StringRef Name) const;
 
   /// Stop timing a phase.
   void stopTimer();
@@ -2106,12 +2112,13 @@ private:
   mutable std::map<std::string, std::vector<Record *>> ClassRecordsMap;
   GlobalMap ExtraGlobals;
 
+  // TODO: Move timing related code out of RecordKeeper.
   // These members are for the phase timing feature. We need a timer group,
   // the last timer started, and a flag to say whether the last timer
   // is the special "backend overall timer."
-  TimerGroup *TimingGroup = nullptr;
-  Timer *LastTimer = nullptr;
-  bool BackendTimer = false;
+  mutable TimerGroup *TimingGroup = nullptr;
+  mutable Timer *LastTimer = nullptr;
+  mutable bool BackendTimer = false;
 
   /// The internal uniquer implementation of the RecordKeeper.
   std::unique_ptr<detail::RecordKeeperImpl> Impl;

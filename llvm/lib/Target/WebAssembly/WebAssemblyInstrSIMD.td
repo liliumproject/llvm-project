@@ -684,7 +684,7 @@ defm EXTRACT_LANE_F16x8 :
   HALF_PRECISION_I<(outs F32:$dst), (ins V128:$vec, vec_i8imm_op:$idx),
                    (outs), (ins vec_i8imm_op:$idx),
                    [(set (f32 F32:$dst), (int_wasm_extract_lane_f16x8
-                    (v8f16 V128:$vec), (i32 LaneIdx16:$idx)))],
+                    (v8f16 V128:$vec), (i32 LaneIdx8:$idx)))],
                    "f16x8.extract_lane\t$dst, $vec, $idx",
                    "f16x8.extract_lane\t$idx", 0x121>;
 
@@ -1112,10 +1112,8 @@ defm ADD_SAT_U : SIMDBinaryIntSmall<uaddsat, "add_sat_u", 112>;
 
 // Integer subtraction: sub / sub_sat_s / sub_sat_u
 defm SUB : SIMDBinaryInt<sub, "sub", 113>;
-defm SUB_SAT_S :
-  SIMDBinaryIntSmall<int_wasm_sub_sat_signed, "sub_sat_s", 114>;
-defm SUB_SAT_U :
-  SIMDBinaryIntSmall<int_wasm_sub_sat_unsigned, "sub_sat_u", 115>;
+defm SUB_SAT_S : SIMDBinaryIntSmall<ssubsat, "sub_sat_s", 114>;
+defm SUB_SAT_U : SIMDBinaryIntSmall<usubsat, "sub_sat_u", 115>;
 
 // Integer multiplication: mul
 let isCommutable = 1 in
