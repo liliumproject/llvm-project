@@ -48492,26 +48492,15 @@ static SDValue combineMul(SDNode *N, SelectionDAG &DAG,
       (!VT.isVector() || !VT.isSimple() || !VT.isInteger()))
     return SDValue();
 
-  ConstantSDNode *CNode = isConstOrConstSplat(
-      N->getOperand(1), /*AllowUndefs*/ true, /*AllowTrunc*/ false);
-  const APInt *C = nullptr;
-  if (!CNode) {
-    if (VT.isVector())
-      if (auto *RawC = getTargetConstantFromNode(N->getOperand(1)))
-        if (auto *SplatC = RawC->getSplatValue())
-          if (auto *SplatCI = dyn_cast<ConstantInt>(SplatC))
-            C = &(SplatCI->getValue());
-
-    if (!C || C->getBitWidth() != VT.getScalarSizeInBits())
-      return SDValue();
-  } else {
-    C = &(CNode->getAPIntValue());
-  }
-
-  if (isPowerOf2_64(C->getZExtValue()))
+  KnownBits Known1 = DAG.computeKnownBits(N->getOperand(1));
+  if (!Known1.isConstant())
     return SDValue();
 
-  int64_t SignMulAmt = C->getSExtValue();
+  const APInt &C = Known1.getConstant();
+  if (isPowerOf2_64(C.getZExtValue()))
+    return SDValue();
+
+  int64_t SignMulAmt = C.getSExtValue();
   assert(SignMulAmt != INT64_MIN && "Int min should have been handled!");
   uint64_t AbsMulAmt = SignMulAmt < 0 ? -SignMulAmt : SignMulAmt;
 
@@ -48570,12 +48559,12 @@ static SDValue combineMul(SDNode *N, SelectionDAG &DAG,
       if (SignMulAmt < 0)
         NewMul = DAG.getNegative(NewMul, DL, VT);
     } else if (!Subtarget.slowLEA())
-      NewMul = combineMulSpecial(C->getZExtValue(), N, DAG, VT, DL);
+      NewMul = combineMulSpecial(C.getZExtValue(), N, DAG, VT, DL);
   }
   if (!NewMul) {
     EVT ShiftVT = VT.isVector() ? VT : MVT::i8;
-    assert(C->getZExtValue() != 0 &&
-           C->getZExtValue() != maxUIntN(VT.getScalarSizeInBits()) &&
+    assert(C.getZExtValue() != 0 &&
+           C.getZExtValue() != maxUIntN(VT.getScalarSizeInBits()) &&
            "Both cases that could cause potential overflows should have "
            "already been handled.");
     if (isPowerOf2_64(AbsMulAmt - 1)) {
@@ -49864,13 +49853,10 @@ static SDValue convertIntLogicToFPLogic(SDNode *N, SelectionDAG &DAG,
 
 // Attempt to fold BITOP(MOVMSK(X),MOVMSK(Y)) -> MOVMSK(BITOP(X,Y))
 // to reduce XMM->GPR traffic.
-static SDValue combineBitOpWithMOVMSK(SDNode *N, SelectionDAG &DAG) {
-  unsigned Opc = N->getOpcode();
+static SDValue combineBitOpWithMOVMSK(unsigned Opc, const SDLoc &DL, SDValue N0,
+                                      SDValue N1, SelectionDAG &DAG) {
   assert((Opc == ISD::OR || Opc == ISD::AND || Opc == ISD::XOR) &&
          "Unexpected bit opcode");
-
-  SDValue N0 = N->getOperand(0);
-  SDValue N1 = N->getOperand(1);
 
   // Both operands must be single use MOVMSK.
   if (N0.getOpcode() != X86ISD::MOVMSK || !N0.hasOneUse() ||
@@ -49888,7 +49874,6 @@ static SDValue combineBitOpWithMOVMSK(SDNode *N, SelectionDAG &DAG) {
       VecVT0.getScalarSizeInBits() != VecVT1.getScalarSizeInBits())
     return SDValue();
 
-  SDLoc DL(N);
   unsigned VecOpc =
       VecVT0.isFloatingPoint() ? convertIntLogicToFPLogicOpcode(Opc) : Opc;
   SDValue Result =
@@ -49899,14 +49884,11 @@ static SDValue combineBitOpWithMOVMSK(SDNode *N, SelectionDAG &DAG) {
 // Attempt to fold BITOP(SHIFT(X,Z),SHIFT(Y,Z)) -> SHIFT(BITOP(X,Y),Z).
 // NOTE: This is a very limited case of what SimplifyUsingDistributiveLaws
 // handles in InstCombine.
-static SDValue combineBitOpWithShift(SDNode *N, SelectionDAG &DAG) {
-  unsigned Opc = N->getOpcode();
+static SDValue combineBitOpWithShift(unsigned Opc, const SDLoc &DL, EVT VT,
+                                     SDValue N0, SDValue N1,
+                                     SelectionDAG &DAG) {
   assert((Opc == ISD::OR || Opc == ISD::AND || Opc == ISD::XOR) &&
          "Unexpected bit opcode");
-
-  SDValue N0 = N->getOperand(0);
-  SDValue N1 = N->getOperand(1);
-  EVT VT = N->getValueType(0);
 
   // Both operands must be single use.
   if (!N0.hasOneUse() || !N1.hasOneUse())
@@ -49927,8 +49909,6 @@ static SDValue combineBitOpWithShift(SDNode *N, SelectionDAG &DAG) {
   case X86ISD::VSRAI: {
     if (BC0.getOperand(1) != BC1.getOperand(1))
       return SDValue();
-
-    SDLoc DL(N);
     SDValue BitOp =
         DAG.getNode(Opc, DL, BCVT, BC0.getOperand(0), BC1.getOperand(0));
     SDValue Shift = DAG.getNode(BCOpc, DL, BCVT, BitOp, BC0.getOperand(1));
@@ -49942,14 +49922,10 @@ static SDValue combineBitOpWithShift(SDNode *N, SelectionDAG &DAG) {
 // Attempt to fold:
 // BITOP(PACKSS(X,Z),PACKSS(Y,W)) --> PACKSS(BITOP(X,Y),BITOP(Z,W)).
 // TODO: Handle PACKUS handling.
-static SDValue combineBitOpWithPACK(SDNode *N, SelectionDAG &DAG) {
-  unsigned Opc = N->getOpcode();
+static SDValue combineBitOpWithPACK(unsigned Opc, const SDLoc &DL, EVT VT,
+                                    SDValue N0, SDValue N1, SelectionDAG &DAG) {
   assert((Opc == ISD::OR || Opc == ISD::AND || Opc == ISD::XOR) &&
          "Unexpected bit opcode");
-
-  SDValue N0 = N->getOperand(0);
-  SDValue N1 = N->getOperand(1);
-  EVT VT = N->getValueType(0);
 
   // Both operands must be single use.
   if (!N0.hasOneUse() || !N1.hasOneUse())
@@ -49976,7 +49952,6 @@ static SDValue combineBitOpWithPACK(SDNode *N, SelectionDAG &DAG) {
       DAG.ComputeNumSignBits(N1.getOperand(1)) != NumSrcBits)
     return SDValue();
 
-  SDLoc DL(N);
   SDValue LHS = DAG.getNode(Opc, DL, SrcVT, N0.getOperand(0), N1.getOperand(0));
   SDValue RHS = DAG.getNode(Opc, DL, SrcVT, N0.getOperand(1), N1.getOperand(1));
   return DAG.getBitcast(VT, DAG.getNode(X86ISD::PACKSS, DL, DstVT, LHS, RHS));
@@ -50537,13 +50512,13 @@ static SDValue combineAnd(SDNode *N, SelectionDAG &DAG,
   if (SDValue V = combineScalarAndWithMaskSetcc(N, DAG, Subtarget))
     return V;
 
-  if (SDValue R = combineBitOpWithMOVMSK(N, DAG))
+  if (SDValue R = combineBitOpWithMOVMSK(N->getOpcode(), dl, N0, N1, DAG))
     return R;
 
-  if (SDValue R = combineBitOpWithShift(N, DAG))
+  if (SDValue R = combineBitOpWithShift(N->getOpcode(), dl, VT, N0, N1, DAG))
     return R;
 
-  if (SDValue R = combineBitOpWithPACK(N, DAG))
+  if (SDValue R = combineBitOpWithPACK(N->getOpcode(), dl, VT, N0, N1, DAG))
     return R;
 
   if (SDValue FPLogic = convertIntLogicToFPLogic(N, DAG, DCI, Subtarget))
@@ -51322,13 +51297,13 @@ static SDValue combineOr(SDNode *N, SelectionDAG &DAG,
   if (SDValue SetCC = combineAndOrForCcmpCtest(N, DAG, DCI, Subtarget))
     return SetCC;
 
-  if (SDValue R = combineBitOpWithMOVMSK(N, DAG))
+  if (SDValue R = combineBitOpWithMOVMSK(N->getOpcode(), dl, N0, N1, DAG))
     return R;
 
-  if (SDValue R = combineBitOpWithShift(N, DAG))
+  if (SDValue R = combineBitOpWithShift(N->getOpcode(), dl, VT, N0, N1, DAG))
     return R;
 
-  if (SDValue R = combineBitOpWithPACK(N, DAG))
+  if (SDValue R = combineBitOpWithPACK(N->getOpcode(), dl, VT, N0, N1, DAG))
     return R;
 
   if (SDValue FPLogic = convertIntLogicToFPLogic(N, DAG, DCI, Subtarget))
@@ -53639,13 +53614,13 @@ static SDValue combineXor(SDNode *N, SelectionDAG &DAG,
   if (SDValue Cmp = foldVectorXorShiftIntoCmp(N, DAG, Subtarget))
     return Cmp;
 
-  if (SDValue R = combineBitOpWithMOVMSK(N, DAG))
+  if (SDValue R = combineBitOpWithMOVMSK(N->getOpcode(), DL, N0, N1, DAG))
     return R;
 
-  if (SDValue R = combineBitOpWithShift(N, DAG))
+  if (SDValue R = combineBitOpWithShift(N->getOpcode(), DL, VT, N0, N1, DAG))
     return R;
 
-  if (SDValue R = combineBitOpWithPACK(N, DAG))
+  if (SDValue R = combineBitOpWithPACK(N->getOpcode(), DL, VT, N0, N1, DAG))
     return R;
 
   if (SDValue FPLogic = convertIntLogicToFPLogic(N, DAG, DCI, Subtarget))
@@ -56448,10 +56423,8 @@ static SDValue combineAdd(SDNode *N, SelectionDAG &DAG,
 // condition comes from the subtract node that produced -X. This matches the
 // cmov expansion for absolute value. By swapping the operands we convert abs
 // to nabs.
-static SDValue combineSubABS(SDNode *N, SelectionDAG &DAG) {
-  SDValue N0 = N->getOperand(0);
-  SDValue N1 = N->getOperand(1);
-
+static SDValue combineSubABS(EVT VT, const SDLoc &DL, SDValue N0, SDValue N1,
+                             SelectionDAG &DAG) {
   if (N1.getOpcode() != X86ISD::CMOV || !N1.hasOneUse())
     return SDValue();
 
@@ -56463,8 +56436,6 @@ static SDValue combineSubABS(SDNode *N, SelectionDAG &DAG) {
   SDValue FalseOp = N1.getOperand(0);
   SDValue TrueOp = N1.getOperand(1);
   X86::CondCode CC = (X86::CondCode)N1.getConstantOperandVal(2);
-  MVT VT = N->getSimpleValueType(0);
-  SDLoc DL(N);
 
   // ABS condition should come from a negate operation.
   if ((CC == X86::COND_S || CC == X86::COND_NS) &&
@@ -56557,6 +56528,7 @@ static SDValue combineX86CloadCstore(SDNode *N, SelectionDAG &DAG) {
 static SDValue combineSub(SDNode *N, SelectionDAG &DAG,
                           TargetLowering::DAGCombinerInfo &DCI,
                           const X86Subtarget &Subtarget) {
+  EVT VT = N->getValueType(0);
   SDValue Op0 = N->getOperand(0);
   SDValue Op1 = N->getOperand(1);
   SDLoc DL(N);
@@ -56579,7 +56551,6 @@ static SDValue combineSub(SDNode *N, SelectionDAG &DAG,
   if (Op1.getOpcode() == ISD::XOR && IsNonOpaqueConstant(Op0) &&
       !isNullConstant(Op0) && IsNonOpaqueConstant(Op1.getOperand(1)) &&
       Op1->hasOneUse()) {
-    EVT VT = Op0.getValueType();
     SDValue NewXor = DAG.getNode(ISD::XOR, SDLoc(Op1), VT, Op1.getOperand(0),
                                  DAG.getNOT(SDLoc(Op1), Op1.getOperand(1), VT));
     SDValue NewAdd =
@@ -56587,7 +56558,7 @@ static SDValue combineSub(SDNode *N, SelectionDAG &DAG,
     return DAG.getNode(ISD::ADD, DL, VT, NewXor, NewAdd);
   }
 
-  if (SDValue V = combineSubABS(N, DAG))
+  if (SDValue V = combineSubABS(VT, DL, Op0, Op1, DAG))
     return V;
 
   // Try to synthesize horizontal subs from subs of shuffles.
@@ -56609,8 +56580,7 @@ static SDValue combineSub(SDNode *N, SelectionDAG &DAG,
     assert(!Op1->hasAnyUseOfValue(1) && "Overflow bit in use");
     SDValue ADC = DAG.getNode(X86ISD::ADC, SDLoc(Op1), Op1->getVTList(), Op0,
                               Op1.getOperand(1), Op1.getOperand(2));
-    return DAG.getNode(ISD::SUB, DL, Op0.getValueType(), ADC.getValue(0),
-                       Op1.getOperand(0));
+    return DAG.getNode(ISD::SUB, DL, VT, ADC.getValue(0), Op1.getOperand(0));
   }
 
   if (SDValue V = combineXorSubCTLZ(N, DL, DAG, Subtarget))
