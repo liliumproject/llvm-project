@@ -49789,13 +49789,13 @@ static unsigned convertIntLogicToFPLogicOpcode(unsigned Opcode) {
 /// If both input operands of a logic op are being cast from floating-point
 /// types or FP compares, try to convert this into a floating-point logic node
 /// to avoid unnecessary moves from SSE to integer registers.
-static SDValue convertIntLogicToFPLogic(SDNode *N, SelectionDAG &DAG,
+static SDValue convertIntLogicToFPLogic(unsigned Opc, const SDLoc &DL, EVT VT,
+                                        SDValue N0, SDValue N1,
+                                        SelectionDAG &DAG,
                                         TargetLowering::DAGCombinerInfo &DCI,
                                         const X86Subtarget &Subtarget) {
-  EVT VT = N->getValueType(0);
-  SDValue N0 = N->getOperand(0);
-  SDValue N1 = N->getOperand(1);
-  SDLoc DL(N);
+  assert((Opc == ISD::OR || Opc == ISD::AND || Opc == ISD::XOR) &&
+         "Unexpected bit opcode");
 
   if (!((N0.getOpcode() == ISD::BITCAST && N1.getOpcode() == ISD::BITCAST) ||
         (N0.getOpcode() == ISD::SETCC && N1.getOpcode() == ISD::SETCC)))
@@ -49813,7 +49813,7 @@ static SDValue convertIntLogicToFPLogic(SDNode *N, SelectionDAG &DAG,
     return SDValue();
 
   if (N0.getOpcode() == ISD::BITCAST && !DCI.isBeforeLegalizeOps()) {
-    unsigned FPOpcode = convertIntLogicToFPLogicOpcode(N->getOpcode());
+    unsigned FPOpcode = convertIntLogicToFPLogicOpcode(Opc);
     SDValue FPLogic = DAG.getNode(FPOpcode, DL, N00Type, N00, N10);
     return DAG.getBitcast(VT, FPLogic);
   }
@@ -49847,7 +49847,7 @@ static SDValue convertIntLogicToFPLogic(SDNode *N, SelectionDAG &DAG,
   SDValue Vec11 = DAG.getNode(ISD::SCALAR_TO_VECTOR, DL, VecVT, N11);
   SDValue Setcc0 = DAG.getSetCC(DL, BoolVecVT, Vec00, Vec01, CC0);
   SDValue Setcc1 = DAG.getSetCC(DL, BoolVecVT, Vec10, Vec11, CC1);
-  SDValue Logic = DAG.getNode(N->getOpcode(), DL, BoolVecVT, Setcc0, Setcc1);
+  SDValue Logic = DAG.getNode(Opc, DL, BoolVecVT, Setcc0, Setcc1);
   return DAG.getNode(ISD::EXTRACT_VECTOR_ELT, DL, VT, Logic, ZeroIndex);
 }
 
@@ -50027,17 +50027,14 @@ static SDValue getIndexFromUnindexedLoad(LoadSDNode *Ld) {
     return SDValue();
 
   SDValue Base = Ld->getBasePtr();
-
   if (Base.getOpcode() != ISD::ADD)
     return SDValue();
 
   SDValue ShiftedIndex = Base.getOperand(0);
-
   if (ShiftedIndex.getOpcode() != ISD::SHL)
     return SDValue();
 
   return ShiftedIndex.getOperand(0);
-
 }
 
 static bool hasBZHI(const X86Subtarget &Subtarget, MVT VT) {
@@ -50066,22 +50063,21 @@ static SDValue combineAndLoadToBZHI(SDNode *Node, SelectionDAG &DAG,
 
   // Try matching the pattern for both operands.
   for (unsigned i = 0; i < 2; i++) {
-    SDValue N = Node->getOperand(i);
-    LoadSDNode *Ld = dyn_cast<LoadSDNode>(N.getNode());
-
-     // continue if the operand is not a load instruction
+    // continue if the operand is not a load instruction
+    auto *Ld = dyn_cast<LoadSDNode>(Node->getOperand(i));
     if (!Ld)
-      return SDValue();
-
+      continue;
     const Value *MemOp = Ld->getMemOperand()->getValue();
-
     if (!MemOp)
-      return SDValue();
+      continue;
+    // Get the Node which indexes into the array.
+    SDValue Index = getIndexFromUnindexedLoad(Ld);
+    if (!Index)
+      continue;
 
-    if (const GetElementPtrInst *GEP = dyn_cast<GetElementPtrInst>(MemOp)) {
-      if (GlobalVariable *GV = dyn_cast<GlobalVariable>(GEP->getOperand(0))) {
+    if (auto *GEP = dyn_cast<GetElementPtrInst>(MemOp)) {
+      if (auto *GV = dyn_cast<GlobalVariable>(GEP->getOperand(0))) {
         if (GV->isConstant() && GV->hasDefinitiveInitializer()) {
-
           Constant *Init = GV->getInitializer();
           Type *Ty = Init->getType();
           if (!isa<ConstantDataArray>(Init) ||
@@ -50109,21 +50105,15 @@ static SDValue combineAndLoadToBZHI(SDNode *Node, SelectionDAG &DAG,
           // -> (and (load arr[idx]), inp)
           // <- (and (srl 0xFFFFFFFF, (sub 32, idx)))
           //    that will be replaced with one bzhi instruction.
-          SDValue Inp = (i == 0) ? Node->getOperand(1) : Node->getOperand(0);
+          SDValue Inp = Node->getOperand(i == 0 ? 1 : 0);
           SDValue SizeC = DAG.getConstant(VT.getSizeInBits(), dl, MVT::i32);
 
-          // Get the Node which indexes into the array.
-          SDValue Index = getIndexFromUnindexedLoad(Ld);
-          if (!Index)
-            return SDValue();
           Index = DAG.getZExtOrTrunc(Index, dl, MVT::i32);
-
           SDValue Sub = DAG.getNode(ISD::SUB, dl, MVT::i32, SizeC, Index);
           Sub = DAG.getNode(ISD::TRUNCATE, dl, MVT::i8, Sub);
 
           SDValue AllOnes = DAG.getAllOnesConstant(dl, VT);
           SDValue LShr = DAG.getNode(ISD::SRL, dl, VT, AllOnes, Sub);
-
           return DAG.getNode(ISD::AND, dl, VT, Inp, LShr);
         }
       }
@@ -50521,7 +50511,8 @@ static SDValue combineAnd(SDNode *N, SelectionDAG &DAG,
   if (SDValue R = combineBitOpWithPACK(N->getOpcode(), dl, VT, N0, N1, DAG))
     return R;
 
-  if (SDValue FPLogic = convertIntLogicToFPLogic(N, DAG, DCI, Subtarget))
+  if (SDValue FPLogic = convertIntLogicToFPLogic(N->getOpcode(), dl, VT, N0, N1,
+                                                 DAG, DCI, Subtarget))
     return FPLogic;
 
   if (SDValue R = combineAndShuffleNot(N, DAG, Subtarget))
@@ -51205,10 +51196,10 @@ static SDValue combineAddOrSubToADCOrSBB(SDNode *N, const SDLoc &DL,
   return SDValue();
 }
 
-static SDValue combineOrXorWithSETCC(SDNode *N, SDValue N0, SDValue N1,
+static SDValue combineOrXorWithSETCC(unsigned Opc, const SDLoc &DL, EVT VT,
+                                     SDValue N0, SDValue N1,
                                      SelectionDAG &DAG) {
-  assert((N->getOpcode() == ISD::XOR || N->getOpcode() == ISD::OR) &&
-         "Unexpected opcode");
+  assert((Opc == ISD::XOR || Opc == ISD::OR) && "Unexpected opcode");
 
   // Delegate to combineAddOrSubToADCOrSBB if we have:
   //
@@ -51219,23 +51210,19 @@ static SDValue combineOrXorWithSETCC(SDNode *N, SDValue N0, SDValue N1,
   if (N0.getOpcode() == ISD::ZERO_EXTEND &&
       N0.getOperand(0).getOpcode() == X86ISD::SETCC && N0.hasOneUse()) {
     if (auto *N1C = dyn_cast<ConstantSDNode>(N1)) {
-      bool IsSub = N->getOpcode() == ISD::XOR;
+      bool IsSub = Opc == ISD::XOR;
       bool N1COdd = N1C->getZExtValue() & 1;
-      if (IsSub ? N1COdd : !N1COdd) {
-        SDLoc DL(N);
-        EVT VT = N->getValueType(0);
+      if (IsSub ? N1COdd : !N1COdd)
         if (SDValue R = combineAddOrSubToADCOrSBB(IsSub, DL, VT, N1, N0, DAG))
           return R;
-      }
     }
   }
 
   // not(pcmpeq(and(X,CstPow2),0)) -> pcmpeq(and(X,CstPow2),CstPow2)
-  if (N->getOpcode() == ISD::XOR && N0.getOpcode() == X86ISD::PCMPEQ &&
+  if (Opc == ISD::XOR && N0.getOpcode() == X86ISD::PCMPEQ &&
       N0.getOperand(0).getOpcode() == ISD::AND &&
       ISD::isBuildVectorAllZeros(N0.getOperand(1).getNode()) &&
       ISD::isBuildVectorAllOnes(N1.getNode())) {
-    MVT VT = N->getSimpleValueType(0);
     APInt UndefElts;
     SmallVector<APInt> EltBits;
     if (getTargetConstantBitsFromNode(N0.getOperand(0).getOperand(1),
@@ -51246,7 +51233,7 @@ static SDValue combineOrXorWithSETCC(SDNode *N, SDValue N0, SDValue N1,
         IsPow2OrUndef &= UndefElts[I] || EltBits[I].isPowerOf2();
 
       if (IsPow2OrUndef)
-        return DAG.getNode(X86ISD::PCMPEQ, SDLoc(N), VT, N0.getOperand(0),
+        return DAG.getNode(X86ISD::PCMPEQ, DL, VT, N0.getOperand(0),
                            N0.getOperand(0).getOperand(1));
     }
   }
@@ -51306,7 +51293,8 @@ static SDValue combineOr(SDNode *N, SelectionDAG &DAG,
   if (SDValue R = combineBitOpWithPACK(N->getOpcode(), dl, VT, N0, N1, DAG))
     return R;
 
-  if (SDValue FPLogic = convertIntLogicToFPLogic(N, DAG, DCI, Subtarget))
+  if (SDValue FPLogic = convertIntLogicToFPLogic(N->getOpcode(), dl, VT, N0, N1,
+                                                 DAG, DCI, Subtarget))
     return FPLogic;
 
   if (DCI.isBeforeLegalizeOps())
@@ -51407,7 +51395,7 @@ static SDValue combineOr(SDNode *N, SelectionDAG &DAG,
     if (SDValue R = foldMaskedMerge(N, DAG))
       return R;
 
-  if (SDValue R = combineOrXorWithSETCC(N, N0, N1, DAG))
+  if (SDValue R = combineOrXorWithSETCC(N->getOpcode(), dl, VT, N0, N1, DAG))
     return R;
 
   return SDValue();
@@ -53623,7 +53611,8 @@ static SDValue combineXor(SDNode *N, SelectionDAG &DAG,
   if (SDValue R = combineBitOpWithPACK(N->getOpcode(), DL, VT, N0, N1, DAG))
     return R;
 
-  if (SDValue FPLogic = convertIntLogicToFPLogic(N, DAG, DCI, Subtarget))
+  if (SDValue FPLogic = convertIntLogicToFPLogic(N->getOpcode(), DL, VT, N0, N1,
+                                                 DAG, DCI, Subtarget))
     return FPLogic;
 
   if (SDValue R = combineXorSubCTLZ(N, DL, DAG, Subtarget))
@@ -53635,7 +53624,7 @@ static SDValue combineXor(SDNode *N, SelectionDAG &DAG,
   if (SDValue SetCC = foldXor1SetCC(N, DAG))
     return SetCC;
 
-  if (SDValue R = combineOrXorWithSETCC(N, N0, N1, DAG))
+  if (SDValue R = combineOrXorWithSETCC(N->getOpcode(), DL, VT, N0, N1, DAG))
     return R;
 
   if (SDValue RV = foldXorTruncShiftIntoCmp(N, DAG))
