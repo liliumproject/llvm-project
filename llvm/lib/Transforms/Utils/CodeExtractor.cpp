@@ -917,6 +917,7 @@ Function *CodeExtractor::constructFunction(const ValueSet &inputs,
       case Attribute::NoFPClass:
       case Attribute::CoroDestroyOnlyWhenComplete:
       case Attribute::CoroElideSafe:
+      case Attribute::NoDivergenceSource:
         continue;
       // Those attributes should be safe to propagate to the extracted function.
       case Attribute::AlwaysInline:
@@ -952,7 +953,7 @@ Function *CodeExtractor::constructFunction(const ValueSet &inputs,
       case Attribute::SanitizeHWAddress:
       case Attribute::SanitizeMemTag:
       case Attribute::SanitizeRealtime:
-      case Attribute::SanitizeRealtimeUnsafe:
+      case Attribute::SanitizeRealtimeBlocking:
       case Attribute::SpeculativeLoadHardening:
       case Attribute::StackProtect:
       case Attribute::StackProtectReq:

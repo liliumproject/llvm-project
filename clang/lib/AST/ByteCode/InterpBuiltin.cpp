@@ -10,6 +10,7 @@
 #include "Compiler.h"
 #include "EvalEmitter.h"
 #include "Interp.h"
+#include "InterpBuiltinBitCast.h"
 #include "PrimType.h"
 #include "clang/AST/OSLog.h"
 #include "clang/AST/RecordLayout.h"
@@ -333,39 +334,48 @@ static bool interp__builtin_copysign(InterpState &S, CodePtr OpPC,
 }
 
 static bool interp__builtin_fmin(InterpState &S, CodePtr OpPC,
-                                 const InterpFrame *Frame, const Function *F) {
+                                 const InterpFrame *Frame, const Function *F,
+                                 bool IsNumBuiltin) {
   const Floating &LHS = getParam<Floating>(Frame, 0);
   const Floating &RHS = getParam<Floating>(Frame, 1);
 
   Floating Result;
 
-  // When comparing zeroes, return -0.0 if one of the zeroes is negative.
-  if (LHS.isZero() && RHS.isZero() && RHS.isNegative())
-    Result = RHS;
-  else if (LHS.isNan() || RHS < LHS)
-    Result = RHS;
-  else
-    Result = LHS;
+  if (IsNumBuiltin) {
+    Result = llvm::minimumnum(LHS.getAPFloat(), RHS.getAPFloat());
+  } else {
+    // When comparing zeroes, return -0.0 if one of the zeroes is negative.
+    if (LHS.isZero() && RHS.isZero() && RHS.isNegative())
+      Result = RHS;
+    else if (LHS.isNan() || RHS < LHS)
+      Result = RHS;
+    else
+      Result = LHS;
+  }
 
   S.Stk.push<Floating>(Result);
   return true;
 }
 
 static bool interp__builtin_fmax(InterpState &S, CodePtr OpPC,
-                                 const InterpFrame *Frame,
-                                 const Function *Func) {
+                                 const InterpFrame *Frame, const Function *Func,
+                                 bool IsNumBuiltin) {
   const Floating &LHS = getParam<Floating>(Frame, 0);
   const Floating &RHS = getParam<Floating>(Frame, 1);
 
   Floating Result;
 
-  // When comparing zeroes, return +0.0 if one of the zeroes is positive.
-  if (LHS.isZero() && RHS.isZero() && LHS.isNegative())
-    Result = RHS;
-  else if (LHS.isNan() || RHS > LHS)
-    Result = RHS;
-  else
-    Result = LHS;
+  if (IsNumBuiltin) {
+    Result = llvm::maximumnum(LHS.getAPFloat(), RHS.getAPFloat());
+  } else {
+    // When comparing zeroes, return +0.0 if one of the zeroes is positive.
+    if (LHS.isZero() && RHS.isZero() && LHS.isNegative())
+      Result = RHS;
+    else if (LHS.isNan() || RHS > LHS)
+      Result = RHS;
+    else
+      Result = LHS;
+  }
 
   S.Stk.push<Floating>(Result);
   return true;
@@ -551,6 +561,20 @@ static bool interp__builtin_fabs(InterpState &S, CodePtr OpPC,
   const Floating &Val = getParam<Floating>(Frame, 0);
 
   S.Stk.push<Floating>(Floating::abs(Val));
+  return true;
+}
+
+static bool interp__builtin_abs(InterpState &S, CodePtr OpPC,
+                                const InterpFrame *Frame, const Function *Func,
+                                const CallExpr *Call) {
+  PrimType ArgT = *S.getContext().classify(Call->getArg(0)->getType());
+  APSInt Val = peekToAPSInt(S.Stk, ArgT);
+  if (Val ==
+      APSInt(APInt::getSignedMinValue(Val.getBitWidth()), /*IsUnsigned=*/false))
+    return false;
+  if (Val.isNegative())
+    Val.negate();
+  pushInteger(S, Val, Call->getType());
   return true;
 }
 
@@ -1230,6 +1254,10 @@ static bool interp__builtin_ia32_bextr(InterpState &S, CodePtr OpPC,
                                        const InterpFrame *Frame,
                                        const Function *Func,
                                        const CallExpr *Call) {
+  if (!Call->getArg(0)->getType()->isIntegerType() ||
+      !Call->getArg(1)->getType()->isIntegerType())
+    return false;
+
   PrimType ValT = *S.Ctx.classify(Call->getArg(0));
   PrimType IndexT = *S.Ctx.classify(Call->getArg(1));
   APSInt Val = peekToAPSInt(S.Stk, ValT,
@@ -1308,6 +1336,10 @@ static bool interp__builtin_ia32_pdep(InterpState &S, CodePtr OpPC,
                                       const InterpFrame *Frame,
                                       const Function *Func,
                                       const CallExpr *Call) {
+  if (!Call->getArg(0)->getType()->isIntegerType() ||
+      !Call->getArg(1)->getType()->isIntegerType())
+    return false;
+
   PrimType ValT = *S.Ctx.classify(Call->getArg(0));
   PrimType MaskT = *S.Ctx.classify(Call->getArg(1));
 
@@ -1329,6 +1361,10 @@ static bool interp__builtin_ia32_pext(InterpState &S, CodePtr OpPC,
                                       const InterpFrame *Frame,
                                       const Function *Func,
                                       const CallExpr *Call) {
+  if (!Call->getArg(0)->getType()->isIntegerType() ||
+      !Call->getArg(1)->getType()->isIntegerType())
+    return false;
+
   PrimType ValT = *S.Ctx.classify(Call->getArg(0));
   PrimType MaskT = *S.Ctx.classify(Call->getArg(1));
 
@@ -1635,6 +1671,15 @@ static bool interp__builtin_operator_delete(InterpState &S, CodePtr OpPC,
       S, OpPC, *AllocForm, DynamicAllocator::Form::Operator, BlockDesc, Source);
 }
 
+static bool interp__builtin_arithmetic_fence(InterpState &S, CodePtr OpPC,
+                                             const InterpFrame *Frame,
+                                             const Function *Func,
+                                             const CallExpr *Call) {
+  const Floating &Arg0 = S.Stk.peek<Floating>();
+  S.Stk.push<Floating>(Arg0);
+  return true;
+}
+
 bool InterpretBuiltin(InterpState &S, CodePtr OpPC, const Function *F,
                       const CallExpr *Call, uint32_t BuiltinID) {
   const InterpFrame *Frame = S.Current;
@@ -1701,7 +1746,16 @@ bool InterpretBuiltin(InterpState &S, CodePtr OpPC, const Function *F,
   case Builtin::BI__builtin_fminl:
   case Builtin::BI__builtin_fminf16:
   case Builtin::BI__builtin_fminf128:
-    if (!interp__builtin_fmin(S, OpPC, Frame, F))
+    if (!interp__builtin_fmin(S, OpPC, Frame, F, /*IsNumBuiltin=*/false))
+      return false;
+    break;
+
+  case Builtin::BI__builtin_fminimum_num:
+  case Builtin::BI__builtin_fminimum_numf:
+  case Builtin::BI__builtin_fminimum_numl:
+  case Builtin::BI__builtin_fminimum_numf16:
+  case Builtin::BI__builtin_fminimum_numf128:
+    if (!interp__builtin_fmin(S, OpPC, Frame, F, /*IsNumBuiltin=*/true))
       return false;
     break;
 
@@ -1710,7 +1764,16 @@ bool InterpretBuiltin(InterpState &S, CodePtr OpPC, const Function *F,
   case Builtin::BI__builtin_fmaxl:
   case Builtin::BI__builtin_fmaxf16:
   case Builtin::BI__builtin_fmaxf128:
-    if (!interp__builtin_fmax(S, OpPC, Frame, F))
+    if (!interp__builtin_fmax(S, OpPC, Frame, F, /*IsNumBuiltin=*/false))
+      return false;
+    break;
+
+  case Builtin::BI__builtin_fmaximum_num:
+  case Builtin::BI__builtin_fmaximum_numf:
+  case Builtin::BI__builtin_fmaximum_numl:
+  case Builtin::BI__builtin_fmaximum_numf16:
+  case Builtin::BI__builtin_fmaximum_numf128:
+    if (!interp__builtin_fmax(S, OpPC, Frame, F, /*IsNumBuiltin=*/true))
       return false;
     break;
 
@@ -1778,6 +1841,13 @@ bool InterpretBuiltin(InterpState &S, CodePtr OpPC, const Function *F,
   case Builtin::BI__builtin_fabsl:
   case Builtin::BI__builtin_fabsf128:
     if (!interp__builtin_fabs(S, OpPC, Frame, F))
+      return false;
+    break;
+
+  case Builtin::BI__builtin_abs:
+  case Builtin::BI__builtin_labs:
+  case Builtin::BI__builtin_llabs:
+    if (!interp__builtin_abs(S, OpPC, Frame, F, Call))
       return false;
     break;
 
@@ -2048,6 +2118,11 @@ bool InterpretBuiltin(InterpState &S, CodePtr OpPC, const Function *F,
 
   case Builtin::BI__builtin_operator_delete:
     if (!interp__builtin_operator_delete(S, OpPC, Frame, F, Call))
+      return false;
+    break;
+
+  case Builtin::BI__arithmetic_fence:
+    if (!interp__builtin_arithmetic_fence(S, OpPC, Frame, F, Call))
       return false;
     break;
 
