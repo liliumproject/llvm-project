@@ -9362,6 +9362,12 @@ void BoUpSLP::reorderGatherNode(TreeEntry &TE) {
   DenseMap<std::pair<size_t, Value *>, SmallVector<LoadInst *>> LoadsMap;
   SmallSet<size_t, 2> LoadKeyUsed;
 
+  // Do not reorder nodes if it small (just 2 elements), all-constant or all
+  // instructions have same opcode already.
+  if (TE.Scalars.size() == 2 || (TE.getOpcode() && !TE.isAltShuffle()) ||
+      all_of(TE.Scalars, isConstant))
+    return;
+
   if (any_of(seq<unsigned>(TE.Idx), [&](unsigned Idx) {
         return VectorizableTree[Idx]->isSame(TE.Scalars);
       }))
@@ -10980,8 +10986,7 @@ BoUpSLP::getEntryCost(const TreeEntry *E, ArrayRef<Value *> VectorizedVals,
     // If the selects are the only uses of the compares, they will be
     // dead and we can adjust the cost by removing their cost.
     if (VI && SelectOnly) {
-      assert((!Ty->isVectorTy() || SLPReVec) &&
-             "Expected only for scalar type.");
+      assert(!Ty->isVectorTy() && "Expected only for scalar type.");
       auto *CI = cast<CmpInst>(VI->getOperand(0));
       IntrinsicCost -= TTI->getCmpSelInstrCost(
           CI->getOpcode(), Ty, Builder.getInt1Ty(), CI->getPredicate(),
