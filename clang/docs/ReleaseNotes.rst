@@ -274,11 +274,24 @@ C Language Changes
 C2y Feature Support
 ^^^^^^^^^^^^^^^^^^^
 
+- Updated conformance for `N3298 <https://www.open-std.org/jtc1/sc22/wg14/www/docs/n3298.htm>`_
+  which adds the ``i`` and ``j`` suffixes for the creation of a ``_Complex``
+  constant value. Clang has always supported these suffixes as a GNU extension,
+  so ``-Wgnu-imaginary-constant`` no longer has effect in C modes, as this is
+  not a C2y extension in C. ``-Wgnu-imaginary-constant`` still applies in C++
+  modes.
+
 - Clang updated conformance for `N3370 <https://www.open-std.org/jtc1/sc22/wg14/www/docs/n3370.htm>`_
   case range expressions. This feature was previously supported by Clang as a
   GNU extension, so ``-Wgnu-case-range`` no longer has effect in C modes, as
   this is now a C2y extension in C. ``-Wgnu-case-range`` still applies in C++
   modes.
+
+- Clang implemented support for `N3344 <https://www.open-std.org/jtc1/sc22/wg14/www/docs/n3344.pdf>`_
+  which disallows a ``void`` parameter from having a qualifier or storage class
+  specifier. Note that ``register void`` was previously accepted in all C
+  language modes but is now rejected (all of the other qualifiers and storage
+  class specifiers were previously rejected).
 
 C23 Feature Support
 ^^^^^^^^^^^^^^^^^^^
