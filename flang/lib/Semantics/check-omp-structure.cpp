@@ -428,7 +428,7 @@ void OmpStructureChecker::HasInvalidLoopBinding(
     for (const auto &clause : clauseList.v) {
       if (const auto *bindClause{
               std::get_if<parser::OmpClause::Bind>(&clause.u)}) {
-        if (bindClause->v.v != parser::OmpBindClause::Type::Teams) {
+        if (bindClause->v.v != parser::OmpBindClause::Binding::Teams) {
           context_.Say(beginDir.source, msg);
         }
       }
@@ -1644,7 +1644,7 @@ void OmpStructureChecker::Leave(const parser::OpenMPDeclareTargetConstruct &x) {
               [&](const parser::OmpClause::DeviceType &deviceTypeClause) {
                 deviceTypeClauseFound = true;
                 if (deviceTypeClause.v.v !=
-                    parser::OmpDeviceTypeClause::Type::Host) {
+                    parser::OmpDeviceTypeClause::DeviceTypeDescription::Host) {
                   // Function / subroutine explicitly marked as runnable by the
                   // target device.
                   deviceConstructFound_ = true;
@@ -2413,6 +2413,23 @@ void OmpStructureChecker::CheckAtomicUpdateStmt(
   ErrIfAllocatableVariable(var);
 }
 
+void OmpStructureChecker::CheckAtomicCompareConstruct(
+    const parser::OmpAtomicCompare &atomicCompareConstruct) {
+
+  // TODO: Check that the if-stmt is `if (var == expr) var = new`
+  //       [with or without then/end-do]
+
+  unsigned version{context_.langOptions().OpenMPVersion};
+  if (version < 51) {
+    context_.Say(atomicCompareConstruct.source,
+        "%s construct not allowed in %s, %s"_err_en_US,
+        atomicCompareConstruct.source, ThisVersion(version), TryVersion(51));
+  }
+
+  // TODO: More work needed here. Some of the Update restrictions need to
+  // be added, but Update isn't the same either.
+}
+
 // TODO: Allow cond-update-stmt once compare clause is supported.
 void OmpStructureChecker::CheckAtomicCaptureConstruct(
     const parser::OmpAtomicCapture &atomicCaptureConstruct) {
@@ -2557,6 +2574,16 @@ void OmpStructureChecker::Enter(const parser::OpenMPAtomicConstruct &x) {
             CheckHintClause<const parser::OmpAtomicClauseList>(
                 &std::get<0>(atomicCapture.t), &std::get<2>(atomicCapture.t));
             CheckAtomicCaptureConstruct(atomicCapture);
+          },
+          [&](const parser::OmpAtomicCompare &atomicCompare) {
+            const auto &dir{std::get<parser::Verbatim>(atomicCompare.t)};
+            PushContextAndClauseSets(
+                dir.source, llvm::omp::Directive::OMPD_atomic);
+            CheckAtomicMemoryOrderClause(
+                &std::get<0>(atomicCompare.t), &std::get<2>(atomicCompare.t));
+            CheckHintClause<const parser::OmpAtomicClauseList>(
+                &std::get<0>(atomicCompare.t), &std::get<2>(atomicCompare.t));
+            CheckAtomicCompareConstruct(atomicCompare);
           },
       },
       x.u);
