@@ -1,4 +1,5 @@
 // RUN: %clang_cc1 -verify=expected,both -std=c++2a -fsyntax-only -fexperimental-new-constant-interpreter %s
+// RUN: %clang_cc1 -verify=expected,both -std=c++2a -fsyntax-only -triple armv8 -fexperimental-new-constant-interpreter %s
 // RUN: %clang_cc1 -verify=expected,both -std=c++2a -fsyntax-only -triple aarch64_be-linux-gnu -fexperimental-new-constant-interpreter %s
 // RUN: %clang_cc1 -verify=expected,both -std=c++2a -fsyntax-only -fexperimental-new-constant-interpreter -triple powerpc64le-unknown-unknown -mabi=ieeelongdouble %s
 // RUN: %clang_cc1 -verify=expected,both -std=c++2a -fsyntax-only -fexperimental-new-constant-interpreter -triple powerpc64-unknown-unknown -mabi=ieeelongdouble %s
@@ -301,7 +302,10 @@ static_assert(bit_cast<unsigned short>(bool16{1,1,1,1,1,0,0,0, 1,1,1,1,0,1,0,0})
 
 static_assert(check_round_trip<bool16>(static_cast<short>(0xCAFE)), "");
 static_assert(check_round_trip<bool32>(static_cast<int>(0xCAFEBABE)), "");
+
+#ifdef __SIZEOF_INT128__
 static_assert(check_round_trip<bool128>(static_cast<__int128_t>(0xCAFEBABE0C05FEFEULL)), "");
+#endif
 
 static_assert(bit_cast<bits<8, uint16_t, 7>, uint16_t>(0xcafe) == (LITTLE_END ? 0x95 : 0x7f));
 static_assert(bit_cast<bits<4, uint16_t, 10>, uint16_t>(0xcafe) == (LITTLE_END ? 0x2 : 0xf));
