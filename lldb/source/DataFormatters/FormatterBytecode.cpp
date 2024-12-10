@@ -486,7 +486,7 @@ llvm::Error Interpret(std::vector<ControlStackElement> &control,
         TYPE_CHECK(Object, String);
         auto name = data.Pop<std::string>();
         POP_VALOBJ(valobj);
-        data.Push(valobj->GetIndexOfChildWithName(name));
+        data.Push((uint64_t)valobj->GetIndexOfChildWithName(name));
         break;
       }
       case sel_get_type: {
@@ -551,7 +551,7 @@ llvm::Error Interpret(std::vector<ControlStackElement> &control,
       }
       case sel_strlen: {
         TYPE_CHECK(String);
-        data.Push(data.Pop<std::string>().size());
+        data.Push((uint64_t)data.Pop<std::string>().size());
         break;
       }
       case sel_fmt: {
