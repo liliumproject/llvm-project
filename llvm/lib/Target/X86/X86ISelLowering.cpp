@@ -58095,9 +58095,13 @@ static SDValue combineConcatVectorOps(const SDLoc &DL, MVT VT,
         MVT SrcVT = Op0.getOperand(0).getSimpleValueType();
         SrcVT = MVT::getVectorVT(SrcVT.getScalarType(),
                                  NumOps * SrcVT.getVectorNumElements());
-        return DAG.getNode(Op0.getOpcode(), DL, VT,
-                           ConcatSubOperand(SrcVT, Ops, 0),
-                           ConcatSubOperand(SrcVT, Ops, 1));
+        SDValue Concat0 = CombineSubOperand(SrcVT, Ops, 0);
+        SDValue Concat1 = CombineSubOperand(SrcVT, Ops, 1);
+        if (Concat0 || Concat1)
+          return DAG.getNode(
+              Op0.getOpcode(), DL, VT,
+              Concat0 ? Concat0 : ConcatSubOperand(SrcVT, Ops, 0),
+              Concat1 ? Concat1 : ConcatSubOperand(SrcVT, Ops, 1));
       }
       break;
     case X86ISD::VPERMV:
@@ -58419,9 +58423,12 @@ static SDValue combineConcatVectorOps(const SDLoc &DL, MVT VT,
     case X86ISD::FHSUB:
       if (!IsSplat && VT.is256BitVector() &&
           (VT.isFloatingPoint() || Subtarget.hasInt256())) {
-        return DAG.getNode(Op0.getOpcode(), DL, VT,
-                           ConcatSubOperand(VT, Ops, 0),
-                           ConcatSubOperand(VT, Ops, 1));
+        SDValue Concat0 = CombineSubOperand(VT, Ops, 0);
+        SDValue Concat1 = CombineSubOperand(VT, Ops, 1);
+        if (Concat0 || Concat1)
+          return DAG.getNode(Op0.getOpcode(), DL, VT,
+                             Concat0 ? Concat0 : ConcatSubOperand(VT, Ops, 0),
+                             Concat1 ? Concat1 : ConcatSubOperand(VT, Ops, 1));
       }
       break;
     case X86ISD::PACKSS:
