@@ -32,7 +32,10 @@
 using namespace llvm;
 
 AsmLexer::AsmLexer(const MCAsmInfo &MAI) : MAI(MAI) {
-  AllowAtInIdentifier = !StringRef(MAI.getCommentString()).starts_with("@");
+  // For COFF targets, this is true, while for ELF targets, it should be false.
+  // Currently, @specifier parsing depends on '@' being included in the token.
+  AllowAtInIdentifier = !StringRef(MAI.getCommentString()).starts_with("@") &&
+                        MAI.useAtForSpecifier();
   LexMotorolaIntegers = MAI.shouldUseMotorolaIntegers();
 }
 
@@ -698,8 +701,10 @@ size_t AsmLexer::peekTokens(MutableArrayRef<AsmToken> Buf,
 
     Buf[ReadCount] = Token;
 
-    if (Token.is(AsmToken::Eof))
+    if (Token.is(AsmToken::Eof)) {
+      ReadCount++;
       break;
+    }
   }
 
   SetError(SavedErrLoc, SavedErr);
