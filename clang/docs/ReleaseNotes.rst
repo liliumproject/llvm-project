@@ -159,6 +159,8 @@ C23 Feature Support
   which clarified that a compound literal used within a function prototype is
   treated as if the compound literal were within the body rather than at file
   scope.
+- Fixed a bug where you could not cast a null pointer constant to type
+  ``nullptr_t``. Fixes #GH133644.
 
 Non-comprehensive list of changes in this release
 -------------------------------------------------
@@ -310,6 +312,8 @@ Improvements to Clang's diagnostics
     __attribute__ ((__format_arg__(2))) void test (int i, ...) { }
 
   Fixes #GH61635
+
+- Split diagnosing base class qualifiers from the ``-Wignored-Qualifiers`` diagnostic group into a new ``-Wignored-base-class-qualifiers`` diagnostic group (which is grouped under ``-Wignored-qualifiers``). Fixes #GH131935.
 
 Improvements to Clang's time-trace
 ----------------------------------
