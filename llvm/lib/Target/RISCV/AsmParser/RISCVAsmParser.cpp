@@ -2673,10 +2673,13 @@ ParseStatus RISCVAsmParser::parseRegListCommon(OperandVector &Operands,
 
 ParseStatus RISCVAsmParser::parseZcmpStackAdj(OperandVector &Operands,
                                               bool ExpectNegative) {
+  SMLoc S = getLoc();
   bool Negative = parseOptionalToken(AsmToken::Minus);
 
-  SMLoc S = getLoc();
-  int64_t StackAdjustment = getLexer().getTok().getIntVal();
+  if (getTok().isNot(AsmToken::Integer))
+    return ParseStatus::NoMatch;
+
+  int64_t StackAdjustment = getTok().getIntVal();
   unsigned RlistVal = static_cast<RISCVOperand *>(Operands[1].get())->Rlist.Val;
 
   assert(RlistVal != RISCVZC::INVALID_RLIST);
@@ -2697,7 +2700,7 @@ ParseStatus RISCVAsmParser::parseZcmpStackAdj(OperandVector &Operands,
 
   unsigned Spimm = (StackAdjustment - StackAdjBase) / 16;
   Operands.push_back(RISCVOperand::createSpimm(Spimm << 4, S));
-  getLexer().Lex();
+  Lex();
   return ParseStatus::Success;
 }
 
