@@ -398,6 +398,9 @@ Bug Fixes in This Version
 
     #if 1 ? 1 : 999999999999999999999
     #endif
+- ``#embed`` directive now diagnoses use of a non-character file (device file)
+  such as ``/dev/urandom`` as an error. This restriction may be relaxed in the
+  future. See (#GH126629).
 
 Bug Fixes to Compiler Builtins
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -522,6 +525,9 @@ X86 Support
 Arm and AArch64 Support
 ^^^^^^^^^^^^^^^^^^^^^^^
 - For ARM targets, cc1as now considers the FPU's features for the selected CPU or Architecture.
+- The ``+nosimd`` attribute is now fully supported for ARM. Previously, this had no effect when being used with
+  ARM targets, however this will now disable NEON instructions being generated. The ``simd`` option is 
+  also now printed when the ``--print-supported-extensions`` option is used.
 
 Android Support
 ^^^^^^^^^^^^^^^
