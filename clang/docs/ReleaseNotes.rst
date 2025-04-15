@@ -411,6 +411,8 @@ Bug Fixes in This Version
 - ``#embed`` directive now diagnoses use of a non-character file (device file)
   such as ``/dev/urandom`` as an error. This restriction may be relaxed in the
   future. See (#GH126629).
+- Fixed a clang 20 regression where diagnostics attached to some calls to member functions
+  using C++23 "deducing this" did not have a diagnostic location (#GH135522)
 
 Bug Fixes to Compiler Builtins
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -437,6 +439,11 @@ Bug Fixes to Attribute Support
 - No longer crashing on ``__attribute__((align_value(N)))`` during template
   instantiation when the function parameter type is not a pointer or reference.
   (#GH26612)
+- Now allowing the ``[[deprecated]]``, ``[[maybe_unused]]``, and
+  ``[[nodiscard]]`` to be applied to a redeclaration after a definition in both
+  C and C++ mode for the standard spellings (other spellings, such as
+  ``__attribute__((unused))`` are still ignored after the definition, though
+  this behavior may be relaxed in the future). (#GH135481)
 
 Bug Fixes to C++ Support
 ^^^^^^^^^^^^^^^^^^^^^^^^
