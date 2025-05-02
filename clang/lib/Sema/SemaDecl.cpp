@@ -59,8 +59,10 @@
 #include "clang/Sema/SemaWasm.h"
 #include "clang/Sema/Template.h"
 #include "llvm/ADT/STLForwardCompat.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/StringSwitch.h"
 #include "llvm/Support/SaveAndRestore.h"
 #include "llvm/TargetParser/Triple.h"
 #include <algorithm>
@@ -10424,6 +10426,15 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
   // Finally, we know we have the right number of parameters, install them.
   NewFD->setParams(Params);
 
+  // If this declarator is a declaration and not a definition, its parameters
+  // will not be pushed onto a scope chain. That means we will not issue any
+  // reserved identifier warnings for the declaration, but we will for the
+  // definition. Handle those here.
+  if (!D.isFunctionDefinition()) {
+    for (const ParmVarDecl *PVD : Params)
+      warnOnReservedIdentifier(PVD);
+  }
+
   if (D.getDeclSpec().isNoreturnSpecified())
     NewFD->addAttr(
         C11NoReturnAttr::Create(Context, D.getDeclSpec().getNoreturnSpecLoc()));
@@ -12032,15 +12043,15 @@ bool Sema::CheckFunctionDeclaration(Scope *S, FunctionDecl *NewFD,
       MayNeedOverloadableChecks = true;
       switch (CheckOverload(S, NewFD, Previous, OldDecl,
                             /*NewIsUsingDecl*/ false)) {
-      case Ovl_Match:
+      case OverloadKind::Match:
         Redeclaration = true;
         break;
 
-      case Ovl_NonFunction:
+      case OverloadKind::NonFunction:
         Redeclaration = true;
         break;
 
-      case Ovl_Overload:
+      case OverloadKind::Overload:
         Redeclaration = false;
         break;
       }
@@ -19844,9 +19855,8 @@ EnumConstantDecl *Sema::CheckEnumConstant(EnumDecl *Enum,
         // constant-expression in the enumerator-definition shall be a converted
         // constant expression of the underlying type.
         EltTy = Enum->getIntegerType();
-        ExprResult Converted =
-          CheckConvertedConstantExpression(Val, EltTy, EnumVal,
-                                           CCEK_Enumerator);
+        ExprResult Converted = CheckConvertedConstantExpression(
+            Val, EltTy, EnumVal, CCEKind::Enumerator);
         if (Converted.isInvalid())
           Val = nullptr;
         else
