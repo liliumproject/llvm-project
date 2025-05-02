@@ -648,6 +648,35 @@ enum class TrivialABIHandling {
 
 enum class TryCaptureKind { Implicit, ExplicitByVal, ExplicitByRef };
 
+enum class AllowFoldKind {
+  No,
+  Allow,
+};
+
+/// Context in which we're performing a usual arithmetic conversion.
+enum class ArithConvKind {
+  /// An arithmetic operation.
+  Arithmetic,
+  /// A bitwise operation.
+  BitwiseOp,
+  /// A comparison.
+  Comparison,
+  /// A conditional (?:) operator.
+  Conditional,
+  /// A compound assignment expression.
+  CompAssign,
+};
+
+// Used for determining in which context a type is allowed to be passed to a
+// vararg function.
+enum class VarArgKind {
+  Valid,
+  ValidInCXX11,
+  Undefined,
+  MSVCUndefined,
+  Invalid
+};
+
 /// Sema - This implements semantic analysis and AST building for C.
 /// \nosubgrouping
 class Sema final : public SemaBase {
@@ -7424,25 +7453,23 @@ public:
     virtual ~VerifyICEDiagnoser() {}
   };
 
-  enum AllowFoldKind {
-    NoFold,
-    AllowFold,
-  };
-
   /// VerifyIntegerConstantExpression - Verifies that an expression is an ICE,
   /// and reports the appropriate diagnostics. Returns false on success.
   /// Can optionally return the value of the expression.
-  ExprResult VerifyIntegerConstantExpression(Expr *E, llvm::APSInt *Result,
-                                             VerifyICEDiagnoser &Diagnoser,
-                                             AllowFoldKind CanFold = NoFold);
-  ExprResult VerifyIntegerConstantExpression(Expr *E, llvm::APSInt *Result,
-                                             unsigned DiagID,
-                                             AllowFoldKind CanFold = NoFold);
-  ExprResult VerifyIntegerConstantExpression(Expr *E,
-                                             llvm::APSInt *Result = nullptr,
-                                             AllowFoldKind CanFold = NoFold);
-  ExprResult VerifyIntegerConstantExpression(Expr *E,
-                                             AllowFoldKind CanFold = NoFold) {
+  ExprResult
+  VerifyIntegerConstantExpression(Expr *E, llvm::APSInt *Result,
+                                  VerifyICEDiagnoser &Diagnoser,
+                                  AllowFoldKind CanFold = AllowFoldKind::No);
+  ExprResult
+  VerifyIntegerConstantExpression(Expr *E, llvm::APSInt *Result,
+                                  unsigned DiagID,
+                                  AllowFoldKind CanFold = AllowFoldKind::No);
+  ExprResult
+  VerifyIntegerConstantExpression(Expr *E, llvm::APSInt *Result = nullptr,
+                                  AllowFoldKind CanFold = AllowFoldKind::No);
+  ExprResult
+  VerifyIntegerConstantExpression(Expr *E,
+                                  AllowFoldKind CanFold = AllowFoldKind::No) {
     return VerifyIntegerConstantExpression(E, nullptr, CanFold);
   }
 
@@ -7579,20 +7606,6 @@ public:
                                       SourceLocation Loc,
                                       BinaryOperatorKind Opc);
 
-  /// Context in which we're performing a usual arithmetic conversion.
-  enum ArithConvKind {
-    /// An arithmetic operation.
-    ACK_Arithmetic,
-    /// A bitwise operation.
-    ACK_BitwiseOp,
-    /// A comparison.
-    ACK_Comparison,
-    /// A conditional (?:) operator.
-    ACK_Conditional,
-    /// A compound assignment expression.
-    ACK_CompAssign,
-  };
-
   // type checking for sizeless vector binary operators.
   QualType CheckSizelessVectorOperands(ExprResult &LHS, ExprResult &RHS,
                                        SourceLocation Loc, bool IsCompAssign,
@@ -7719,16 +7732,6 @@ public:
                                        const FunctionProtoType *Proto,
                                        Expr *Fn);
 
-  // Used for determining in which context a type is allowed to be passed to a
-  // vararg function.
-  enum VarArgKind {
-    VAK_Valid,
-    VAK_ValidInCXX11,
-    VAK_Undefined,
-    VAK_MSVCUndefined,
-    VAK_Invalid
-  };
-
   /// Determine the degree of POD-ness for an expression.
   /// Incomplete types are considered POD, since this check can be performed
   /// when we're in an unevaluated context.
@@ -7755,7 +7758,7 @@ public:
   // Check that the usual arithmetic conversions can be performed on this pair
   // of expressions that might be of enumeration type.
   void checkEnumArithmeticConversions(Expr *LHS, Expr *RHS, SourceLocation Loc,
-                                      Sema::ArithConvKind ACK);
+                                      ArithConvKind ACK);
 
   // UsualArithmeticConversions - performs the UsualUnaryConversions on it's
   // operands and then handles various conversions that are common to binary
