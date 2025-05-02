@@ -771,6 +771,39 @@ enum class AssignConvertType {
   Incompatible
 };
 
+/// The scope in which to find allocation functions.
+enum class AllocationFunctionScope {
+  /// Only look for allocation functions in the global scope.
+  Global,
+  /// Only look for allocation functions in the scope of the
+  /// allocated class.
+  Class,
+  /// Look for allocation functions in both the global scope
+  /// and in the scope of the allocated class.
+  Both
+};
+
+/// Describes the result of an "if-exists" condition check.
+enum class IfExistsResult {
+  /// The symbol exists.
+  Exists,
+
+  /// The symbol does not exist.
+  DoesNotExist,
+
+  /// The name is a dependent name, so the results will differ
+  /// from one instantiation to the next.
+  Dependent,
+
+  /// An error occurred.
+  Error
+};
+
+enum class CorrectTypoKind {
+  NonError,     // CorrectTypo used in a non error recovery situation.
+  ErrorRecovery // CorrectTypo used in normal error recovery.
+};
+
 /// Sema - This implements semantic analysis and AST building for C.
 /// \nosubgrouping
 class Sema final : public SemaBase {
@@ -8372,18 +8405,6 @@ public:
   bool CheckAllocatedType(QualType AllocType, SourceLocation Loc,
                           SourceRange R);
 
-  /// The scope in which to find allocation functions.
-  enum AllocationFunctionScope {
-    /// Only look for allocation functions in the global scope.
-    AFS_Global,
-    /// Only look for allocation functions in the scope of the
-    /// allocated class.
-    AFS_Class,
-    /// Look for allocation functions in both the global scope
-    /// and in the scope of the allocated class.
-    AFS_Both
-  };
-
   /// Finds the overloads of operator new and delete that are appropriate
   /// for the allocation.
   bool FindAllocationFunctions(
@@ -8666,22 +8687,6 @@ public:
                : CorrectDelayedTyposInExpr(ER.get(), InitDecl,
                                            RecoverUncorrectedTypos, Filter);
   }
-
-  /// Describes the result of an "if-exists" condition check.
-  enum IfExistsResult {
-    /// The symbol exists.
-    IER_Exists,
-
-    /// The symbol does not exist.
-    IER_DoesNotExist,
-
-    /// The name is a dependent name, so the results will differ
-    /// from one instantiation to the next.
-    IER_Dependent,
-
-    /// An error occurred.
-    IER_Error
-  };
 
   IfExistsResult
   CheckMicrosoftIfExistsSymbol(Scope *S, CXXScopeSpec &SS,
@@ -9592,11 +9597,6 @@ public:
                           bool IncludeGlobalScope = true,
                           bool IncludeDependentBases = false,
                           bool LoadExternal = true);
-
-  enum CorrectTypoKind {
-    CTK_NonError,     // CorrectTypo used in a non error recovery situation.
-    CTK_ErrorRecovery // CorrectTypo used in normal error recovery.
-  };
 
   /// Try to "correct" a typo in the source code by finding
   /// visible declarations whose names are similar to the name that was
