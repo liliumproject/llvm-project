@@ -24,14 +24,14 @@ using namespace llvm;
 static unsigned adjustFixupValue(unsigned Kind, uint64_t Value) {
   switch (Kind) {
   default:
-    llvm_unreachable("Unknown fixup kind!");
+    assert(uint16_t(Kind) < FirstTargetFixupKind && "Unknown fixup kind!");
+    return Value;
   case FK_Data_1:
   case FK_Data_2:
   case FK_Data_4:
   case FK_Data_8:
     return Value;
 
-  case Sparc::fixup_sparc_wplt30:
   case Sparc::fixup_sparc_call30:
     return (Value >> 2) & 0x3fffffff;
 
@@ -67,15 +67,6 @@ static unsigned adjustFixupValue(unsigned Kind, uint64_t Value) {
   case Sparc::fixup_sparc_pc10:
   case Sparc::fixup_sparc_lo10:
     return Value & 0x3ff;
-
-  case Sparc::fixup_sparc_h44:
-    return (Value >> 22) & 0x3fffff;
-
-  case Sparc::fixup_sparc_m44:
-    return (Value >> 12) & 0x3ff;
-
-  case Sparc::fixup_sparc_l44:
-    return Value & 0xfff;
 
   case Sparc::fixup_sparc_hh:
     return (Value >> 42) & 0x3fffff;
@@ -142,15 +133,11 @@ namespace {
         { "fixup_sparc_13",        19,     13,  0 },
         { "fixup_sparc_hi22",      10,     22,  0 },
         { "fixup_sparc_lo10",      22,     10,  0 },
-        { "fixup_sparc_h44",       10,     22,  0 },
-        { "fixup_sparc_m44",       22,     10,  0 },
-        { "fixup_sparc_l44",       20,     12,  0 },
         { "fixup_sparc_hh",        10,     22,  0 },
         { "fixup_sparc_hm",        22,     10,  0 },
         { "fixup_sparc_lm",        10,     22,  0 },
         { "fixup_sparc_pc22",      10,     22,  MCFixupKindInfo::FKF_IsPCRel },
         { "fixup_sparc_pc10",      22,     10,  MCFixupKindInfo::FKF_IsPCRel },
-        { "fixup_sparc_wplt30",     2,     30,  MCFixupKindInfo::FKF_IsPCRel },
         { "fixup_sparc_hix22",         10, 22,  0 },
         { "fixup_sparc_lox10",         19, 13,  0 },
       };
@@ -164,15 +151,11 @@ namespace {
         { "fixup_sparc_13",         0,     13,  0 },
         { "fixup_sparc_hi22",       0,     22,  0 },
         { "fixup_sparc_lo10",       0,     10,  0 },
-        { "fixup_sparc_h44",        0,     22,  0 },
-        { "fixup_sparc_m44",        0,     10,  0 },
-        { "fixup_sparc_l44",        0,     12,  0 },
         { "fixup_sparc_hh",         0,     22,  0 },
         { "fixup_sparc_hm",         0,     10,  0 },
         { "fixup_sparc_lm",         0,     22,  0 },
         { "fixup_sparc_pc22",       0,     22,  MCFixupKindInfo::FKF_IsPCRel },
         { "fixup_sparc_pc10",       0,     10,  MCFixupKindInfo::FKF_IsPCRel },
-        { "fixup_sparc_wplt30",      0,     30,  MCFixupKindInfo::FKF_IsPCRel },
         { "fixup_sparc_hix22",          0, 22,  0 },
         { "fixup_sparc_lox10",          0, 13,  0 },
       };
@@ -233,8 +216,7 @@ namespace {
                     const MCValue &Target, MutableArrayRef<char> Data,
                     uint64_t Value, bool IsResolved,
                     const MCSubtargetInfo *STI) const override {
-
-      if (mc::isRelocation(Fixup.getKind()))
+      if (mc::isRelocRelocation(Fixup.getKind()))
         return;
       Value = adjustFixupValue(Fixup.getKind(), Value);
       if (!Value) return;           // Doesn't change encoding.
