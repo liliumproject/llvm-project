@@ -679,6 +679,7 @@ Bug Fixes to C++ Support
   whose type depends on itself. (#GH51347), (#GH55872)
 - Improved parser recovery of invalid requirement expressions. In turn, this
   fixes crashes from follow-on processing of the invalid requirement. (#GH138820)
+- Fixed the handling of pack indexing types in the constraints of a member function redeclaration. (#GH138255)
 
 Bug Fixes to AST Handling
 ^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -904,6 +905,8 @@ OpenMP Support
 - Added support 'no_openmp_constructs' assumption clause.
 - Added support for 'self_maps' in map and requirement clause.
 - Added support for 'omp stripe' directive.
+- Fixed a crashing bug with ``omp unroll partial`` if the argument to
+  ``partial`` was an invalid expression. (#GH139267)
 - Fixed a crashing bug with ``omp tile sizes`` if the argument to ``sizes`` was
   an invalid expression. (#GH139073)
 - Fixed a crashing bug with ``omp distribute dist_schedule`` if the argument to
