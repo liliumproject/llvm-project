@@ -410,8 +410,6 @@ public:
           SetError(EXCRegSet, Read, 0);
         }
         break;
-
-      default:
       }
       offset = next_thread_state;
     }
@@ -532,7 +530,6 @@ public:
           SetError(EXCRegSet, Read, 0);
         }
         break;
-      default:
       }
       offset = next_thread_state;
     }
@@ -668,7 +665,6 @@ public:
           SetError(EXCRegSet, Read, 0);
         }
         break;
-      default:
       }
       offset = next_thread_state;
     }
