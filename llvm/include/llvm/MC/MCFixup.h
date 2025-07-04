@@ -81,8 +81,6 @@ class MCFixup {
 
   /// Consider bit fields if we need more flags.
 
-  /// The source location which gave rise to the fixup, if any.
-  SMLoc Loc;
 public:
   static MCFixup create(uint32_t Offset, const MCExpr *Value,
                         MCFixupKind Kind, SMLoc Loc = SMLoc()) {
@@ -90,12 +88,10 @@ public:
     FI.Value = Value;
     FI.Offset = Offset;
     FI.Kind = Kind;
-    FI.Loc = Loc;
     return FI;
   }
-  static MCFixup create(uint32_t Offset, const MCExpr *Value, unsigned Kind,
-                        SMLoc Loc = SMLoc()) {
-    return create(Offset, Value, MCFixupKind(Kind), Loc);
+  static MCFixup create(uint32_t Offset, const MCExpr *Value, unsigned Kind) {
+    return create(Offset, Value, MCFixupKind(Kind));
   }
 
   MCFixupKind getKind() const { return Kind; }
@@ -128,7 +124,7 @@ public:
     }
   }
 
-  SMLoc getLoc() const { return Loc; }
+  SMLoc getLoc() const;
 };
 
 namespace mc {
