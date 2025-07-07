@@ -6,7 +6,21 @@
 //
 //===----------------------------------------------------------------------===//
 
-#define __CLC_BODY <clc/math/unary_decl_with_ptr.inc>
-#define FUNCTION sincos
-#include <clc/math/gentype.inc>
-#undef FUNCTION
+#ifndef __CLC_OPENCL_OPENCL_BASE_H__
+#define __CLC_OPENCL_OPENCL_BASE_H__
+
+#ifdef cl_khr_fp64
+#pragma OPENCL EXTENSION cl_khr_fp64 : enable
+#endif
+
+#ifdef cl_khr_fp16
+#pragma OPENCL EXTENSION cl_khr_fp16 : enable
+#endif
+
+/* Function Attributes */
+#include <clc/clcfunc.h>
+
+/* 6.1 Supported Data Types */
+#include <clc/clctypes.h>
+
+#endif // __CLC_OPENCL_OPENCL_BASE_H__
