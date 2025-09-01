@@ -83,8 +83,8 @@ static bool foldGuardedFunnelShift(Instruction &I, const DominatorTree &DT) {
     //  == (ShVal0 << ShAmt) | (ShVal1 >> (Width -ShAmt))
     if (match(V, m_OneUse(m_c_Or(
                      m_Shl(m_Value(ShVal0), m_Value(ShAmt)),
-                     m_LShr(m_Value(ShVal1),
-                            m_Sub(m_SpecificInt(Width), m_Deferred(ShAmt))))))) {
+                     m_LShr(m_Value(ShVal1), m_Sub(m_SpecificInt(Width),
+                                                   m_Deferred(ShAmt))))))) {
       return Intrinsic::fshl;
     }
 
@@ -632,10 +632,10 @@ static bool foldLoadsRecursive(Value *V, LoadOps &LOps, const DataLayout &DL,
   Instruction *L1, *L2;
 
   // Go to the last node with loads.
-  if (match(V, m_OneUse(m_c_Or(m_Value(X),
-                               m_OneUse(m_ShlOrSelf(m_OneUse(m_ZExt(m_OneUse(
-                                                        m_Instruction(L2)))),
-                                                    ShAmt2)))))) {
+  if (match(V,
+            m_OneUse(m_c_Or(m_Value(X), m_OneUse(m_ShlOrSelf(
+                                            m_OneUse(m_ZExt(m_Instruction(L2))),
+                                            ShAmt2)))))) {
     if (!foldLoadsRecursive(X, LOps, DL, AA) && LOps.FoundRoot)
       // Avoid Partial chain merge.
       return false;
@@ -646,8 +646,8 @@ static bool foldLoadsRecursive(Value *V, LoadOps &LOps, const DataLayout &DL,
   LoadInst *LI1 = LOps.Root;
   uint64_t ShAmt1 = LOps.Shift;
   if (LOps.FoundRoot == false &&
-      match(X, m_OneUse(m_ShlOrSelf(
-                   m_OneUse(m_ZExt(m_OneUse(m_Instruction(L1)))), ShAmt1)))) {
+      match(X, m_OneUse(
+                   m_ShlOrSelf(m_OneUse(m_ZExt(m_Instruction(L1))), ShAmt1)))) {
     LI1 = dyn_cast<LoadInst>(L1);
   }
   LoadInst *LI2 = dyn_cast<LoadInst>(L2);
