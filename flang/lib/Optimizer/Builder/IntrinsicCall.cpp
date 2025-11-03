@@ -3433,13 +3433,15 @@ IntrinsicLibrary::genBarrierTryWait(mlir::Type resultType,
   builder.setInsertionPointToStart(afterBlock);
   auto llvmPtrTy = mlir::LLVM::LLVMPointerType::get(builder.getContext());
   auto barrier = builder.createConvert(loc, llvmPtrTy, args[0]);
-  mlir::Value ret =
-      mlir::NVVM::InlinePtxOp::create(
-          builder, loc, {resultType}, {barrier, args[1], ns}, {},
-          ".reg .pred p; mbarrier.try_wait.shared.b64 p, [%1], %2, %3; "
-          "selp.b32 %0, 1, 0, p;",
-          {})
-          .getResult(0);
+  mlir::Value ret = mlir::NVVM::InlinePtxOp::create(
+                        builder, loc, {resultType}, {barrier, args[1], ns}, {},
+                        "{\n"
+                        "  .reg .pred p;\n"
+                        "  mbarrier.try_wait.shared.b64 p, [%1], %2, %3;\n"
+                        "  selp.b32 %0, 1, 0, p;\n"
+                        "}",
+                        {})
+                        .getResult(0);
   mlir::scf::YieldOp::create(builder, loc, ret);
   builder.setInsertionPointAfter(whileOp);
   return whileOp.getResult(0);
@@ -3454,8 +3456,11 @@ IntrinsicLibrary::genBarrierTryWaitSleep(mlir::Type resultType,
   auto barrier = builder.createConvert(loc, llvmPtrTy, args[0]);
   return mlir::NVVM::InlinePtxOp::create(
              builder, loc, {resultType}, {barrier, args[1], args[2]}, {},
-             ".reg .pred p; mbarrier.try_wait.shared.b64 p, [%1], %2, %3; "
-             "selp.b32 %0, 1, 0, p;",
+             "{\n"
+             "  .reg .pred p;\n"
+             "  mbarrier.try_wait.shared.b64 p, [%1], %2, %3;\n"
+             "  selp.b32 %0, 1, 0, p;\n"
+             "}",
              {})
       .getResult(0);
 }
@@ -9496,7 +9501,7 @@ void IntrinsicLibrary::genTMABulkS2G(llvm::ArrayRef<fir::ExtendedValue> args) {
       builder, loc, dst, src, fir::getBase(args[2]), {}, {});
 
   mlir::NVVM::InlinePtxOp::create(builder, loc, mlir::TypeRange{}, {}, {},
-                                  "cp.async.bulk.commit_group", {});
+                                  "cp.async.bulk.commit_group;", {});
   mlir::NVVM::CpAsyncBulkWaitGroupOp::create(builder, loc,
                                              builder.getI32IntegerAttr(0), {});
 }
@@ -9512,7 +9517,7 @@ static void genTMABulkStore(fir::FirOpBuilder &builder, mlir::Location loc,
   mlir::NVVM::CpAsyncBulkSharedCTAToGlobalOp::create(builder, loc, dst, src,
                                                      size, {}, {});
   mlir::NVVM::InlinePtxOp::create(builder, loc, mlir::TypeRange{}, {}, {},
-                                  "cp.async.bulk.commit_group", {});
+                                  "cp.async.bulk.commit_group;", {});
   mlir::NVVM::CpAsyncBulkWaitGroupOp::create(builder, loc,
                                              builder.getI32IntegerAttr(0), {});
 }
