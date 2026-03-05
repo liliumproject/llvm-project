@@ -14,7 +14,6 @@
 #include <climits>
 
 #include <chrono>
-#include <deque>
 #include <list>
 #include <memory>
 #include <mutex>
@@ -2378,15 +2377,9 @@ public:
     ProcessEventHijacker(Process &process, lldb::ListenerSP listener_sp)
         : m_process(process) {
       m_process.HijackProcessEvents(std::move(listener_sp));
-      // When we are hijacking events, we don't want them to leak out
-      // to a user thread that is allowed to see the private state:
-      m_process.m_current_private_state_thread->m_consult_use_private_state_stack = false;
     }
 
-    ~ProcessEventHijacker() { 
-      m_process.m_current_private_state_thread->m_consult_use_private_state_stack = true;
-      m_process.RestoreProcessEvents();
-    }
+    ~ProcessEventHijacker() { m_process.RestoreProcessEvents(); }
 
   private:
     Process &m_process;
@@ -3206,7 +3199,7 @@ protected:
     // you won't be doing any debugging today.
     bool StartupThread();
 
-    bool IsOnThread(lldb::thread_t thread) const;
+    bool IsOnThread(const HostThread &thread) const;
 
     bool IsJoinable() { return m_private_state_thread.IsJoinable(); }
 
@@ -3225,11 +3218,7 @@ protected:
       return m_private_state.GetValue();
     }
 
-    lldb::StateType GetPublicState() const {
-      if (UsesPrivateState())
-        return m_private_state.GetValue();
-      return m_public_state.GetValue();
-    }
+    lldb::StateType GetPublicState() const { return m_public_state.GetValue(); }
 
     void SetPublicState(lldb::StateType new_value) {
       m_public_state.SetValue(new_value);
@@ -3268,34 +3257,10 @@ protected:
     }
 
     ProcessRunLock &GetRunLock() {
-      lldb::thread_t curr_thread = Host::GetCurrentThread();
-      if (IsOnThread(curr_thread) || UsesPrivateState(curr_thread))
+      if (IsOnThread(Host::GetCurrentThread()))
         return m_private_run_lock;
       else
         return m_public_run_lock;
-    }
-
-    void PushUsePrivateState(lldb::thread_t new_thread) {
-      m_use_private_state_stack.push_back(new_thread);
-    }
-
-    void PopUsePrivateState() {
-      // Should we be permissive here?
-      if (!m_use_private_state_stack.empty())
-        m_use_private_state_stack.pop_back();
-    }
-
-    bool UsesPrivateState() const {
-      return UsesPrivateState(Host::GetCurrentThread());
-    }
-
-    bool UsesPrivateState(lldb::thread_t thread) const {
-      if (!m_consult_use_private_state_stack)
-        return false;
-
-      if (m_use_private_state_stack.empty())
-        return false;
-      return m_use_private_state_stack.back() == thread;
     }
 
     Process &m_process;
@@ -3324,12 +3289,6 @@ protected:
     ///< This will be the thread name given to the Private State HostThread when
     ///< it gets spun up.
     std::string m_thread_name;
-
-    std::deque<lldb::thread_t> m_use_private_state_stack;
-    // When we are running behind the user's back - e.g. when running 
-    // expressions, we don't want the user thread we've allowed to see the
-    // private state to see it here.
-    bool m_consult_use_private_state_stack = true;
   };
 
   bool SetPrivateRunLockToStopped() {
