@@ -6,12 +6,10 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include <clc/synchronization/clc_work_group_barrier.h>
+#include "clc/amdgpu/amdgpu_utils.h"
+#include "clc/workitem/clc_get_local_linear_id.h"
+#include "clc/workitem/clc_get_sub_group_id.h"
 
-_CLC_OVERLOAD _CLC_DEF void
-__clc_work_group_barrier(int memory_scope,
-                         __CLC_MemorySemantics memory_semantics) {
-  (void)memory_scope;
-  (void)memory_semantics;
-  __syncthreads();
+_CLC_DEF _CLC_OVERLOAD _CLC_CONST uint __clc_get_sub_group_id(void) {
+  return (uint)__clc_get_local_linear_id() >> __clc_amdgpu_wavesize_log2();
 }

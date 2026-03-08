@@ -42,6 +42,7 @@ atomic/atom_sub.cl
 atomic/atom_xchg.cl
 atomic/atom_xor.cl
 atomic/atomic_work_item_fence.cl
+collective/work_group_any_all.cl
 common/degrees.cl
 common/mix.cl
 common/radians.cl
@@ -175,6 +176,7 @@ math/tanh.cl
 math/tanpi.cl
 math/tgamma.cl
 math/trunc.cl
+mem_fence/fence.cl
 misc/shuffle.cl
 misc/shuffle2.cl
 relational/all.cl
@@ -200,7 +202,9 @@ shared/max.cl
 shared/min.cl
 shared/vload.cl
 shared/vstore.cl
+subgroup/subgroup.cl
 subgroup/sub_group_broadcast.cl
+synchronization/sub_group_barrier.cl
 synchronization/work_group_barrier.cl
 workitem/get_enqueued_local_size.cl
 workitem/get_global_id.cl

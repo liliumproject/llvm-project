@@ -6,12 +6,12 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include <clc/synchronization/clc_work_group_barrier.h>
+#ifndef __CLC_COLLECTIVE_CLC_WORK_GROUP_ANY_ALL_H__
+#define __CLC_COLLECTIVE_CLC_WORK_GROUP_ANY_ALL_H__
 
-_CLC_OVERLOAD _CLC_DEF void
-__clc_work_group_barrier(int memory_scope,
-                         __CLC_MemorySemantics memory_semantics) {
-  (void)memory_scope;
-  (void)memory_semantics;
-  __syncthreads();
-}
+#include "clc/internal/clc.h"
+
+_CLC_OVERLOAD _CLC_DECL int __clc_work_group_any(int predicate);
+_CLC_OVERLOAD _CLC_DECL int __clc_work_group_all(int predicate);
+
+#endif // __CLC_COLLECTIVE_CLC_WORK_GROUP_ANY_ALL_H__

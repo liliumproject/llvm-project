@@ -6,12 +6,11 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include <clc/synchronization/clc_work_group_barrier.h>
+#include "clc/amdgpu/amdgpu_utils.h"
+#include "clc/subgroup/clc_subgroup.h"
 
-_CLC_OVERLOAD _CLC_DEF void
-__clc_work_group_barrier(int memory_scope,
-                         __CLC_MemorySemantics memory_semantics) {
-  (void)memory_scope;
-  (void)memory_semantics;
-  __syncthreads();
+_CLC_DEF _CLC_OVERLOAD _CLC_CONST uint __clc_get_num_sub_groups(void) {
+  uint group_size = __clc_amdgpu_workgroup_size();
+  return (group_size + __builtin_amdgcn_wavefrontsize() - 1) >>
+         __clc_amdgpu_wavesize_log2();
 }

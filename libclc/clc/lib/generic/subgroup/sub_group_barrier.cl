@@ -6,12 +6,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include <clc/synchronization/clc_work_group_barrier.h>
+#include "clc/synchronization/clc_sub_group_barrier.h"
 
-_CLC_OVERLOAD _CLC_DEF void
-__clc_work_group_barrier(int memory_scope,
-                         __CLC_MemorySemantics memory_semantics) {
-  (void)memory_scope;
-  (void)memory_semantics;
-  __syncthreads();
+_CLC_DEF _CLC_OVERLOAD void
+__clc_sub_group_barrier(__CLC_MemorySemantics memory_semantics) {
+  __clc_sub_group_barrier(memory_semantics, __MEMORY_SCOPE_WVFRNT);
 }
