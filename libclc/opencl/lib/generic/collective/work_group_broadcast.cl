@@ -6,11 +6,10 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef __CLC_WORKITEM_CLC_GET_MAX_SUB_GROUP_SIZE_H__
-#define __CLC_WORKITEM_CLC_GET_MAX_SUB_GROUP_SIZE_H__
+#include "clc/collective/clc_work_group_broadcast.h"
 
-#include <clc/internal/clc.h>
+#define __CLC_BODY <work_group_broadcast.inc>
+#include <clc/integer/gentype.inc>
 
-_CLC_OVERLOAD _CLC_CONST _CLC_DECL uint __clc_get_max_sub_group_size(void);
-
-#endif // __CLC_WORKITEM_CLC_GET_MAX_SUB_GROUP_SIZE_H__
+#define __CLC_BODY <work_group_broadcast.inc>
+#include <clc/math/gentype.inc>
