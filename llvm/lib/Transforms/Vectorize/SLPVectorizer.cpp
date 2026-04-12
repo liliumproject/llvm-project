@@ -16736,7 +16736,6 @@ BoUpSLP::getEntryCost(const TreeEntry *E, ArrayRef<Value *> VectorizedVals,
             Scalars, PointerOps, E->ReorderIndices, *TTI, *DL, *SE, *AC, *DT,
             *TLI, [](Value *) { return true; }, IsMasked, InterleaveFactor,
             CompressMask, LoadVecTy);
-        assert(IsVectorized && "Failed to vectorize load");
         CompressEntryToData.try_emplace(E, CompressMask, LoadVecTy,
                                         InterleaveFactor, IsMasked);
         Align CommonAlignment = LI0->getAlign();
@@ -23679,6 +23678,18 @@ BoUpSLP::BlockScheduling::tryScheduleBundle(ArrayRef<Value *> VL, BoUpSLP *SLP,
       auto *I = dyn_cast<Instruction>(V);
       if (!I || (HasCopyables && S.isCopyableElement(V)))
         continue;
+      if (EI && EI.UserTE->State == TreeEntry::Vectorize &&
+          EI.UserTE->getOpcode() == Instruction::PHI &&
+          any_of(SLP->VectorizableTree,
+                 [&](const std::unique_ptr<TreeEntry> &TE) {
+                   return TE->UserTreeIndex &&
+                          TE->UserTreeIndex.UserTE->State ==
+                              TreeEntry::Vectorize &&
+                          TE->UserTreeIndex.UserTE->getOpcode() ==
+                              Instruction::PHI &&
+                          TE->hasCopyableElements() && TE->isCopyableElement(V);
+                 }))
+        return std::nullopt;
       SmallDenseMap<std::pair<Instruction *, Value *>, unsigned> UserOpToNumOps;
       for (const Use &U : I->operands()) {
         unsigned &NumOps =
