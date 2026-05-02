@@ -2307,7 +2307,7 @@ add_entrypoint_object(
   HDRS
     ../fmaximum_mag.h
   DEPENDS
-    libc.src.__support.FPUtil.basic_operations
+    libc.src.__support.math.fmaximum_mag
 )
 
 add_entrypoint_object(
@@ -2317,7 +2317,7 @@ add_entrypoint_object(
   HDRS
     ../fmaximum_magf.h
   DEPENDS
-    libc.src.__support.FPUtil.basic_operations
+    libc.src.__support.math.fmaximum_magf
 )
 
 add_entrypoint_object(
@@ -2327,7 +2327,7 @@ add_entrypoint_object(
   HDRS
     ../fmaximum_magl.h
   DEPENDS
-    libc.src.__support.FPUtil.basic_operations
+    libc.src.__support.math.fmaximum_magl
 )
 
 add_entrypoint_object(
@@ -2337,8 +2337,7 @@ add_entrypoint_object(
   HDRS
     ../fmaximum_magf16.h
   DEPENDS
-    libc.src.__support.macros.properties.types
-    libc.src.__support.FPUtil.basic_operations
+    libc.src.__support.math.fmaximum_magf16
 )
 
 add_entrypoint_object(
@@ -2348,8 +2347,7 @@ add_entrypoint_object(
   HDRS
     ../fmaximum_magf128.h
   DEPENDS
-    libc.src.__support.macros.properties.types
-    libc.src.__support.FPUtil.basic_operations
+    libc.src.__support.math.fmaximum_magf128
 )
 
 add_entrypoint_object(
@@ -2359,12 +2357,7 @@ add_entrypoint_object(
   HDRS
     ../fmaximum_magbf16.h
   DEPENDS
-    libc.src.__support.FPUtil.basic_operations
-    libc.src.__support.FPUtil.bfloat16
-    libc.src.__support.macros.config
-    libc.src.__support.macros.properties.types
-  FLAGS
-    MISC_MATH_BASIC_OPS_OPT
+    libc.src.__support.math.fmaximum_magbf16
 )
 
 add_entrypoint_object(
@@ -2556,7 +2549,7 @@ add_entrypoint_object(
   HDRS
     ../fminimum_mag.h
   DEPENDS
-    libc.src.__support.FPUtil.basic_operations
+    libc.src.__support.math.fminimum_mag
 )
 
 add_entrypoint_object(
@@ -2566,7 +2559,7 @@ add_entrypoint_object(
   HDRS
     ../fminimum_magf.h
   DEPENDS
-    libc.src.__support.FPUtil.basic_operations
+    libc.src.__support.math.fminimum_magf
 )
 
 add_entrypoint_object(
@@ -2576,7 +2569,7 @@ add_entrypoint_object(
   HDRS
     ../fminimum_magl.h
   DEPENDS
-    libc.src.__support.FPUtil.basic_operations
+    libc.src.__support.math.fminimum_magl
 )
 
 add_entrypoint_object(
@@ -2586,8 +2579,7 @@ add_entrypoint_object(
   HDRS
     ../fminimum_magf16.h
   DEPENDS
-    libc.src.__support.macros.properties.types
-    libc.src.__support.FPUtil.basic_operations
+    libc.src.__support.math.fminimum_magf16
 )
 
 add_entrypoint_object(
@@ -2597,8 +2589,7 @@ add_entrypoint_object(
   HDRS
     ../fminimum_magf128.h
   DEPENDS
-    libc.src.__support.macros.properties.types
-    libc.src.__support.FPUtil.basic_operations
+    libc.src.__support.math.fminimum_magf128
 )
 
 add_entrypoint_object(
@@ -2608,12 +2599,7 @@ add_entrypoint_object(
   HDRS
     ../fminimum_magbf16.h
   DEPENDS
-    libc.src.__support.FPUtil.basic_operations
-    libc.src.__support.FPUtil.bfloat16
-    libc.src.__support.macros.config
-    libc.src.__support.macros.properties.types
-  FLAGS
-    MISC_MATH_BASIC_OPS_OPT
+    libc.src.__support.math.fminimum_magbf16
 )
 
 add_entrypoint_object(
@@ -3687,7 +3673,7 @@ add_entrypoint_object(
   HDRS
     ../ufromfp.h
   DEPENDS
-    libc.src.__support.FPUtil.nearest_integer_operations
+    libc.src.__support.math.ufromfp
 )
 
 add_entrypoint_object(
@@ -3697,7 +3683,7 @@ add_entrypoint_object(
   HDRS
     ../ufromfpf.h
   DEPENDS
-    libc.src.__support.FPUtil.nearest_integer_operations
+    libc.src.__support.math.ufromfpf
 )
 
 add_entrypoint_object(
@@ -3707,7 +3693,7 @@ add_entrypoint_object(
   HDRS
     ../ufromfpl.h
   DEPENDS
-    libc.src.__support.FPUtil.nearest_integer_operations
+    libc.src.__support.math.ufromfpl
 )
 
 add_entrypoint_object(
@@ -3717,8 +3703,7 @@ add_entrypoint_object(
   HDRS
     ../ufromfpf16.h
   DEPENDS
-    libc.src.__support.macros.properties.types
-    libc.src.__support.FPUtil.nearest_integer_operations
+    libc.src.__support.math.ufromfpf16
 )
 
 add_entrypoint_object(
@@ -3728,8 +3713,7 @@ add_entrypoint_object(
   HDRS
     ../ufromfpf128.h
   DEPENDS
-    libc.src.__support.macros.properties.types
-    libc.src.__support.FPUtil.nearest_integer_operations
+    libc.src.__support.math.ufromfpf128
 )
 
 add_entrypoint_object(
@@ -3739,11 +3723,7 @@ add_entrypoint_object(
   HDRS
     ../ufromfpbf16.h
   DEPENDS
-    libc.src.__support.common
-    libc.src.__support.FPUtil.bfloat16
-    libc.src.__support.FPUtil.nearest_integer_operations
-    libc.src.__support.macros.config
-    libc.src.__support.macros.properties.types
+    libc.src.__support.math.ufromfpbf16
 )
 
 add_entrypoint_object(
@@ -3753,7 +3733,7 @@ add_entrypoint_object(
   HDRS
     ../ufromfpx.h
   DEPENDS
-    libc.src.__support.FPUtil.nearest_integer_operations
+    libc.src.__support.math.ufromfpx
 )
 
 add_entrypoint_object(
@@ -3763,7 +3743,7 @@ add_entrypoint_object(
   HDRS
     ../ufromfpxf.h
   DEPENDS
-    libc.src.__support.FPUtil.nearest_integer_operations
+    libc.src.__support.math.ufromfpxf
 )
 
 add_entrypoint_object(
@@ -3773,7 +3753,7 @@ add_entrypoint_object(
   HDRS
     ../ufromfpxl.h
   DEPENDS
-    libc.src.__support.FPUtil.nearest_integer_operations
+    libc.src.__support.math.ufromfpxl
 )
 
 add_entrypoint_object(
@@ -3783,8 +3763,7 @@ add_entrypoint_object(
   HDRS
     ../ufromfpxf16.h
   DEPENDS
-    libc.src.__support.macros.properties.types
-    libc.src.__support.FPUtil.nearest_integer_operations
+    libc.src.__support.math.ufromfpxf16
 )
 
 add_entrypoint_object(
@@ -3794,8 +3773,7 @@ add_entrypoint_object(
   HDRS
     ../ufromfpxf128.h
   DEPENDS
-    libc.src.__support.macros.properties.types
-    libc.src.__support.FPUtil.nearest_integer_operations
+    libc.src.__support.math.ufromfpxf128
 )
 
 add_entrypoint_object(
@@ -3805,11 +3783,7 @@ add_entrypoint_object(
   HDRS
     ../ufromfpxbf16.h
   DEPENDS
-    libc.src.__support.common
-    libc.src.__support.FPUtil.bfloat16
-    libc.src.__support.FPUtil.nearest_integer_operations
-    libc.src.__support.macros.config
-    libc.src.__support.macros.properties.types
+    libc.src.__support.math.ufromfpxbf16
 )
 
 add_entrypoint_object(
