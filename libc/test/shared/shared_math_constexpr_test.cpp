@@ -75,6 +75,7 @@ static_assert(0LL == LIBC_NAMESPACE::shared::llround(0.0));
 static_assert(0L == LIBC_NAMESPACE::shared::lrint(0.0));
 static_assert(0L == LIBC_NAMESPACE::shared::lround(0.0));
 static_assert(0.0 == LIBC_NAMESPACE::shared::nearbyint(0.0));
+static_assert(0.0 == LIBC_NAMESPACE::shared::nextafter(0.0, 0.0));
 static_assert(0.0 == LIBC_NAMESPACE::shared::rint(0.0));
 static_assert(1 == LIBC_NAMESPACE::shared::iscanonical(0.0));
 static_assert(0.0 == LIBC_NAMESPACE::shared::issignaling(0.0));
@@ -84,6 +85,10 @@ static_assert(1 == [] {
              LIBC_NAMESPACE::shared::nan(&arg))
       .is_nan();
 }());
+static_assert(0.0 == LIBC_NAMESPACE::shared::round(0.0));
+static_assert(0.0 == LIBC_NAMESPACE::shared::roundeven(0.0));
+static_assert(0.0 == LIBC_NAMESPACE::shared::trunc(0.0));
+static_assert(0 == LIBC_NAMESPACE::shared::isnan(0.0));
 
 //===----------------------------------------------------------------------===//
 //                       Float Tests
@@ -145,6 +150,7 @@ static_assert(0LL == LIBC_NAMESPACE::shared::llroundf(0.0f));
 static_assert(0L == LIBC_NAMESPACE::shared::lrintf(0.0f));
 static_assert(0L == LIBC_NAMESPACE::shared::lroundf(0.0f));
 static_assert(0.0f == LIBC_NAMESPACE::shared::nearbyintf(0.0f));
+static_assert(0.0f == LIBC_NAMESPACE::shared::nextafterf(0.0f, 0.0f));
 static_assert(0.0f == LIBC_NAMESPACE::shared::rintf(0.0f));
 static_assert(1 == LIBC_NAMESPACE::shared::iscanonicalf(0.0f));
 static_assert(0.0 == LIBC_NAMESPACE::shared::issignalingf(0.0f));
@@ -154,6 +160,10 @@ static_assert(1 == [] {
              LIBC_NAMESPACE::shared::nanf(&arg))
       .is_nan();
 }());
+static_assert(0.0f == LIBC_NAMESPACE::shared::roundf(0.0f));
+static_assert(0.0f == LIBC_NAMESPACE::shared::roundevenf(0.0f));
+static_assert(0.0f == LIBC_NAMESPACE::shared::truncf(0.0f));
+static_assert(0 == LIBC_NAMESPACE::shared::isnanf(0.0f));
 
 //===----------------------------------------------------------------------===//
 //                       Float16 Tests
@@ -233,6 +243,7 @@ static_assert(0LL == LIBC_NAMESPACE::shared::llroundf16(0.0f16));
 static_assert(0L == LIBC_NAMESPACE::shared::lrintf16(0.0f16));
 static_assert(0L == LIBC_NAMESPACE::shared::lroundf16(0.0f16));
 static_assert(0.0f16 == LIBC_NAMESPACE::shared::nearbyintf16(0.0f16));
+static_assert(0.0f16 == LIBC_NAMESPACE::shared::nextafterf16(0.0f16, 0.0f16));
 static_assert(0.0f16 == LIBC_NAMESPACE::shared::rintf16(0.0f16));
 static_assert(1 == LIBC_NAMESPACE::shared::iscanonicalf16(0.0f16));
 static_assert(0.0 == LIBC_NAMESPACE::shared::issignalingf16(0.0f16));
@@ -242,6 +253,9 @@ static_assert(1 == [] {
              LIBC_NAMESPACE::shared::nanf16(&arg))
       .is_nan();
 }());
+static_assert(0.0f16 == LIBC_NAMESPACE::shared::roundf16(0.0f16));
+static_assert(0.0f16 == LIBC_NAMESPACE::shared::roundevenf16(0.0f16));
+static_assert(0.0f16 == LIBC_NAMESPACE::shared::truncf16(0.0f16));
 #endif // LIBC_TYPES_HAS_FLOAT16
 
 //===----------------------------------------------------------------------===//
@@ -318,6 +332,7 @@ static_assert(0LL == LIBC_NAMESPACE::shared::llroundl(0.0L));
 static_assert(0L == LIBC_NAMESPACE::shared::lrintl(0.0L));
 static_assert(0L == LIBC_NAMESPACE::shared::lroundl(0.0L));
 static_assert(0.0L == LIBC_NAMESPACE::shared::nearbyintl(0.0L));
+static_assert(0.0L == LIBC_NAMESPACE::shared::nextafterl(0.0L, 0.0L));
 static_assert(0.0L == LIBC_NAMESPACE::shared::rintl(0.0L));
 static_assert(1 == LIBC_NAMESPACE::shared::iscanonicall(0.0L));
 static_assert(0.0 == LIBC_NAMESPACE::shared::issignalingl(0.0L));
@@ -325,6 +340,10 @@ static_assert(1 == [] {
   const char arg{};
   return LIBC_NAMESPACE::fputil::FPBits<long double>(LIBC_NAMESPACE::shared::nanl(&arg)).is_nan();
 }());
+static_assert(0.0L == LIBC_NAMESPACE::shared::roundl(0.0L));
+static_assert(0.0L == LIBC_NAMESPACE::shared::roundevenl(0.0L));
+static_assert(0.0L == LIBC_NAMESPACE::shared::truncl(0.0L));
+static_assert(0 == LIBC_NAMESPACE::shared::isnanl(0.0L));
 
 #endif
 
@@ -436,6 +455,9 @@ static_assert(0L == LIBC_NAMESPACE::shared::lrintf128(float128(0.0)));
 static_assert(0L == LIBC_NAMESPACE::shared::lroundf128(float128(0.0)));
 static_assert(float128(0.0) ==
               LIBC_NAMESPACE::shared::nearbyintf128(float128(0.0)));
+static_assert(float128(0.0) ==
+              LIBC_NAMESPACE::shared::nextafterf128(float128(0.0),
+                                                    float128(0.0)));
 static_assert(float128(0.0) == LIBC_NAMESPACE::shared::rintf128(float128(0.0)));
 static_assert(1 == LIBC_NAMESPACE::shared::iscanonicalf128(float128(0.0)));
 static_assert(0.0 == LIBC_NAMESPACE::shared::issignalingf128(float128(0.0)));
@@ -445,6 +467,12 @@ static_assert(1 == [] {
              LIBC_NAMESPACE::shared::nanf128(&arg))
       .is_nan();
 }());
+static_assert(float128(0.0) ==
+              LIBC_NAMESPACE::shared::roundf128(float128(0.0)));
+static_assert(float128(0.0) ==
+              LIBC_NAMESPACE::shared::roundevenf128(float128(0.0)));
+static_assert(float128(0.0) ==
+              LIBC_NAMESPACE::shared::truncf128(float128(0.0)));
 
 #endif // LIBC_TYPES_HAS_FLOAT128
 
@@ -552,6 +580,9 @@ static_assert(0L == LIBC_NAMESPACE::shared::lrintbf16(bfloat16(0.0)));
 static_assert(0L == LIBC_NAMESPACE::shared::lroundbf16(bfloat16(0.0)));
 static_assert(bfloat16(0.0) ==
               LIBC_NAMESPACE::shared::nearbyintbf16(bfloat16(0.0)));
+static_assert(bfloat16(0.0) ==
+              LIBC_NAMESPACE::shared::nextafterbf16(bfloat16(0.0),
+                                                    bfloat16(0.0)));
 static_assert(bfloat16(0.0) == LIBC_NAMESPACE::shared::rintbf16(bfloat16(0.0)));
 static_assert(1 == LIBC_NAMESPACE::shared::iscanonicalbf16(bfloat16(0.0)));
 static_assert(0 == LIBC_NAMESPACE::shared::issignalingbf16(bfloat16(0.0)));
@@ -561,5 +592,11 @@ static_assert(bfloat16(1) == [] {
              LIBC_NAMESPACE::shared::nanbf16(&arg))
       .is_nan();
 }());
+static_assert(bfloat16(0.0) ==
+              LIBC_NAMESPACE::shared::roundbf16(bfloat16(0.0)));
+static_assert(bfloat16(0.0) ==
+              LIBC_NAMESPACE::shared::roundevenbf16(bfloat16(0.0)));
+static_assert(bfloat16(0.0) ==
+              LIBC_NAMESPACE::shared::truncbf16(bfloat16(0.0)));
 
 TEST(LlvmLibcSharedMathTest, ConstantEvaluation) {}
