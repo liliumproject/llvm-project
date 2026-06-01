@@ -11692,17 +11692,16 @@ static SDValue lowerShuffleAsBitBlend(const SDLoc &DL, MVT VT, SDValue V1,
                                       SDValue V2, ArrayRef<int> Mask,
                                       SelectionDAG &DAG) {
   assert(VT.isInteger() && "Only supports integer vector types!");
-  MVT EltVT = VT.getVectorElementType();
-  SDValue Zero = DAG.getConstant(0, DL, EltVT);
-  SDValue AllOnes = DAG.getAllOnesConstant(DL, EltVT);
-  SmallVector<SDValue, 16> MaskOps;
+  unsigned EltSizeInBIts = VT.getScalarSizeInBits();
+  APInt Zero = APInt::getZero(EltSizeInBIts);
+  APInt AllOnes = APInt::getAllOnes(EltSizeInBIts);
+  SmallVector<APInt, 16> MaskOps;
   for (int i = 0, Size = Mask.size(); i < Size; ++i) {
     if (Mask[i] >= 0 && Mask[i] != i && Mask[i] != i + Size)
       return SDValue(); // Shuffled input!
     MaskOps.push_back(Mask[i] < Size ? AllOnes : Zero);
   }
-
-  SDValue V1Mask = DAG.getBuildVector(VT, DL, MaskOps);
+  SDValue V1Mask = getConstVector(MaskOps, VT, DAG, DL);
   return getBitSelect(DL, VT, V1, V2, V1Mask, DAG);
 }
 
@@ -56435,21 +56434,44 @@ static SDValue combineXorWithGF2P8AFFINEQB(SDNode *N, const SDLoc &DL,
                                            SelectionDAG &DAG, EVT VT) {
   using namespace SDPatternMatch;
 
-  SDValue X, Y, SplatOp;
-  APInt Imm;
-  // Use sd_match for structure matching - m_Xor handles commutation
+  SDValue X, Y, XorOp;
+  APInt Imm, ConstUndef;
+
   if (!sd_match(N, m_Xor(m_OneUse(m_TernaryOp(X86ISD::GF2P8AFFINEQB, m_Value(X),
                                               m_Value(Y), m_ConstInt(Imm))),
-                         m_Value(SplatOp))))
+                         m_Value(XorOp))))
     return SDValue();
 
   // GF2P8AFFINEQB only operates on i8 vector types
   assert((VT == MVT::v16i8 || VT == MVT::v32i8 || VT == MVT::v64i8) &&
          "Unsupported GFNI type");
 
-  // Use X86::isConstantSplat for robust splat constant extraction
+  unsigned NumElts = VT.getVectorNumElements();
+
+  // Fold: GF2P8AFFINEQB(x, M) ^ x
+  //   =>  GF2P8AFFINEQB(x, M ^ IDENTITY)
+  // The "identity" is a noop. It adds a XOR by the unmodified input.
+  SmallVector<APInt> YEltBits;
+  if (X == XorOp && getTargetConstantBitsFromNode(Y, 8, ConstUndef, YEltBits,
+                                                  /*AllowWholeUndefs=*/false)) {
+    const uint8_t IdentityMatrix[] = {128, 64, 32, 16, 8, 4, 2, 1};
+
+    SmallVector<SDValue> BuildMatrix;
+    for (unsigned I = 0; I != NumElts; ++I) {
+      APInt MatrixRow = YEltBits[I] ^ IdentityMatrix[I % 8];
+      BuildMatrix.push_back(DAG.getConstant(MatrixRow, DL, MVT::i8));
+    }
+
+    SDValue NewMatrix = DAG.getBuildVector(VT, DL, BuildMatrix);
+
+    return DAG.getNode(X86ISD::GF2P8AFFINEQB, DL, VT, X, NewMatrix,
+                       DAG.getTargetConstant(Imm, DL, MVT::i8));
+  }
+
+  // Fold: GF2P8AFFINEQB(x, m, Imm) ^ Splat(C)
+  //   =>  GF2P8AFFINEQB(x, m, Imm ^ C)
   APInt SplatVal;
-  if (!X86::isConstantSplat(SplatOp, SplatVal, /*AllowPartialUndefs=*/false))
+  if (!X86::isConstantSplat(XorOp, SplatVal, /*AllowPartialUndefs=*/false))
     return SDValue();
 
   uint64_t NewImm = Imm.getZExtValue() ^ SplatVal.getZExtValue();
