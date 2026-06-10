@@ -3643,24 +3643,6 @@ Instruction *InstCombinerImpl::visitCallInst(CallInst &CI) {
       return nullptr;
     break;
   case Intrinsic::assume: {
-    Value *IIOperand = II->getArgOperand(0);
-
-    // Canonicalize assume(a && b) -> assume(a); assume(b);
-    // Note: New assumption intrinsics created here are registered by
-    // the InstCombineIRInserter object.
-    Value *A, *B;
-    if (match(IIOperand, m_LogicalAnd(m_Value(A), m_Value(B)))) {
-      Builder.CreateAssumption(A);
-      Builder.CreateAssumption(B);
-      return eraseInstFromFunction(*II);
-    }
-    // assume(!(a || b)) -> assume(!a); assume(!b);
-    if (match(IIOperand, m_Not(m_LogicalOr(m_Value(A), m_Value(B))))) {
-      Builder.CreateAssumption(Builder.CreateNot(A));
-      Builder.CreateAssumption(Builder.CreateNot(B));
-      return eraseInstFromFunction(*II);
-    }
-
     for (auto [Idx, OBU] : llvm::enumerate(II->operand_bundles())) {
       switch (getBundleAttrFromOBU(OBU)) {
       case BundleAttr::None:
@@ -3699,6 +3681,9 @@ Instruction *InstCombinerImpl::visitCallInst(CallInst &CI) {
           return CallBase::removeOperandBundleAt(II, Idx);
         break;
       }
+
+      case BundleAttr::Ignore:
+        return CallBase::removeOperandBundleAt(II, Idx);
 
       case BundleAttr::NonNull: {
         auto [Ptr] = llvm::getAssumeNonNullInfo(OBU);
@@ -3749,7 +3734,6 @@ Instruction *InstCombinerImpl::visitCallInst(CallInst &CI) {
 
       // TODO: Drop these assumes when they are redundant
       case BundleAttr::DereferenceableOrNull:
-      case BundleAttr::Ignore:
       case BundleAttr::NoUndef:
         break;
 
@@ -3757,6 +3741,29 @@ Instruction *InstCombinerImpl::visitCallInst(CallInst &CI) {
       case BundleAttr::Cold:
         break;
       }
+    }
+
+    // If the assume has operand bundles, the folds below will never work, so
+    // don't bother trying.
+    if (II->hasOperandBundles())
+      break;
+
+    Value *IIOperand = II->getArgOperand(0);
+
+    // Canonicalize assume(a && b) -> assume(a); assume(b);
+    // Note: New assumption intrinsics created here are registered by
+    // the InstCombineIRInserter object.
+    Value *A, *B;
+    if (match(IIOperand, m_LogicalAnd(m_Value(A), m_Value(B)))) {
+      Builder.CreateAssumption(A);
+      Builder.CreateAssumption(B);
+      return eraseInstFromFunction(*II);
+    }
+    // assume(!(a || b)) -> assume(!a); assume(!b);
+    if (match(IIOperand, m_Not(m_LogicalOr(m_Value(A), m_Value(B))))) {
+      Builder.CreateAssumption(Builder.CreateNot(A));
+      Builder.CreateAssumption(Builder.CreateNot(B));
+      return eraseInstFromFunction(*II);
     }
 
     // Convert nonnull assume like:
@@ -3803,7 +3810,7 @@ Instruction *InstCombinerImpl::visitCallInst(CallInst &CI) {
     // then this one is redundant, and should be removed.
     KnownBits Known(1);
     computeKnownBits(IIOperand, Known, II);
-    if (Known.isAllOnes() && isAssumeWithEmptyBundle(cast<AssumeInst>(*II)))
+    if (Known.isAllOnes())
       return eraseInstFromFunction(*II);
 
     // assume(false) is unreachable.
