@@ -2,21 +2,25 @@ include(OrcRTTesting)
 
 if (ORC_RT_LLVM_TOOLS_AVAILABLE)
   configure_lit_site_cfg(
-    ${CMAKE_CURRENT_SOURCE_DIR}/lit.site.cfg.py.in
-    ${CMAKE_CURRENT_BINARY_DIR}/lit.site.cfg.py
+    ${CMAKE_CURRENT_SOURCE_DIR}/regression/lit.site.cfg.py.in
+    ${CMAKE_CURRENT_BINARY_DIR}/regression/lit.site.cfg.py
     MAIN_CONFIG
-    ${CMAKE_CURRENT_SOURCE_DIR}/lit.cfg.py
+    ${CMAKE_CURRENT_SOURCE_DIR}/regression/lit.cfg.py
   )
+
+  # Build the regression test-support tools.
+  add_subdirectory(tools)
 
   list(APPEND ORC_RT_TEST_DEPS
     orc-executor
+    orc-rt-smoke-check
   )
 
   add_custom_target(orc-rt-test-depends DEPENDS ${ORC_RT_TEST_DEPS})
   set_target_properties(orc-rt-test-depends PROPERTIES FOLDER "orc-rt/tests")
 
   add_lit_testsuite(check-orc-rt "Running the ORC-RT regression tests"
-    ${CMAKE_CURRENT_BINARY_DIR}
+    ${CMAKE_CURRENT_BINARY_DIR}/regression
     DEPENDS ${ORC_RT_TEST_DEPS}
     )
 else()
