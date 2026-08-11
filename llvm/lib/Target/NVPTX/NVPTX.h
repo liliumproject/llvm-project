@@ -50,24 +50,25 @@ FunctionPass *createNVPTXAtomicLowerLegacyPass();
 FunctionPass *createNVVMIntrRangePass();
 ModulePass *createNVVMReflectPass(unsigned int SmVersion);
 MachineFunctionPass *createNVPTXPrologEpilogPass();
-MachineFunctionPass *createNVPTXReplaceImageHandlesPass();
+MachineFunctionPass *createNVPTXReplaceImageHandlesLegacyPass();
 FunctionPass *createNVPTXImageOptimizerLegacyPass();
 ModulePass *createNVPTXLowerArgsPass();
 ModulePass *createNVPTXPromoteParamAlignPass();
+FunctionPass *createNVPTXAllocaHoistingLegacyPass();
 FunctionPass *createNVPTXLowerAllocaLegacyPass();
 FunctionPass *createNVPTXLowerUnreachableLegacyPass(bool TrapUnreachable,
                                                     bool NoTrapAfterNoreturn);
 FunctionPass *createNVPTXMarkKernelPtrsGlobalPass();
 FunctionPass *createNVPTXTagInvariantLoadsPass();
 FunctionPass *createNVPTXIRPeepholePass();
-MachineFunctionPass *createNVPTXPeephole();
+MachineFunctionPass *createNVPTXPeepholeLegacyPass();
 MachineFunctionPass *createNVPTXProxyRegErasurePass();
 MachineFunctionPass *createNVPTXForwardParamsLegacyPass();
 MachineFunctionPass *createNVPTXAddressFolderPass();
 
 void initializeNVVMReflectLegacyPassPass(PassRegistry &);
 void initializeGenericToNVVMLegacyPassPass(PassRegistry &);
-void initializeNVPTXAllocaHoistingPass(PassRegistry &);
+void initializeNVPTXAllocaHoistingLegacyPassPass(PassRegistry &);
 void initializeNVPTXAsmPrinterPass(PassRegistry &);
 void initializeNVPTXAssignValidGlobalNamesLegacyPassPass(PassRegistry &);
 void initializeNVPTXAtomicLowerLegacyPassPass(PassRegistry &);
@@ -84,7 +85,7 @@ void initializeNVVMIntrRangePass(PassRegistry &);
 void initializeNVVMReflectPass(PassRegistry &);
 void initializeNVPTXAAWrapperPassPass(PassRegistry &);
 void initializeNVPTXExternalAAWrapperPass(PassRegistry &);
-void initializeNVPTXPeepholePass(PassRegistry &);
+void initializeNVPTXPeepholeLegacyPassPass(PassRegistry &);
 void initializeNVPTXMarkKernelPtrsGlobalLegacyPassPass(PassRegistry &);
 void initializeNVPTXTagInvariantLoadLegacyPassPass(PassRegistry &);
 void initializeNVPTXIRPeepholePass(PassRegistry &);
@@ -96,6 +97,12 @@ struct NVVMIntrRangePass : OptionalPassInfoMixin<NVVMIntrRangePass> {
 
 struct NVPTXIRPeepholePass : OptionalPassInfoMixin<NVPTXIRPeepholePass> {
   PreservedAnalyses run(Function &F, FunctionAnalysisManager &AM);
+};
+
+class NVPTXPeepholePass : public OptionalPassInfoMixin<NVPTXPeepholePass> {
+public:
+  PreservedAnalyses run(MachineFunction &MF,
+                        MachineFunctionAnalysisManager &MFAM);
 };
 
 struct NVVMReflectPass : OptionalPassInfoMixin<NVVMReflectPass> {
@@ -144,6 +151,13 @@ public:
   PreservedAnalyses run(Function &F, FunctionAnalysisManager &FAM);
 };
 
+class NVPTXReplaceImageHandlesPass
+    : public RequiredPassInfoMixin<NVPTXReplaceImageHandlesPass> {
+public:
+  PreservedAnalyses run(MachineFunction &MF,
+                        MachineFunctionAnalysisManager &MFAM);
+};
+
 struct NVPTXLowerArgsPass : OptionalPassInfoMixin<NVPTXLowerArgsPass> {
 private:
   TargetMachine &TM;
@@ -183,6 +197,12 @@ public:
 
 class NVPTXLowerAllocaPass
     : public RequiredPassInfoMixin<NVPTXLowerAllocaPass> {
+public:
+  PreservedAnalyses run(Function &F, FunctionAnalysisManager &FAM);
+};
+
+class NVPTXAllocaHoistingPass
+    : public RequiredPassInfoMixin<NVPTXAllocaHoistingPass> {
 public:
   PreservedAnalyses run(Function &F, FunctionAnalysisManager &FAM);
 };
