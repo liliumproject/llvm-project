@@ -2632,6 +2632,17 @@ private:
                                      TTI::VectorInstrContext ContextHint =
                                          TTI::VectorInstrContext::None) const;
 
+  /// \returns the cost of the shuffles that put the lanes of the tree entries
+  /// in \p ValueMasks into the vector \p Base of \p ScalarTy elements.
+  /// \p ScaleCost scales the cost of each lane shuffle, but not the cost of
+  /// resizing an entry vector.
+  InstructionCost getEntriesLanesShuffleCost(
+      MutableArrayRef<std::pair<const TreeEntry *, SmallVector<int>>>
+          ValueMasks,
+      Value *Base, Type *ScalarTy,
+      function_ref<InstructionCost(InstructionCost, const TreeEntry &)>
+          ScaleCost) const;
+
   /// Set the Builder insert point to one after the last instruction in
   /// the bundle
   void setInsertPointAfterBundle(const TreeEntry *E);
@@ -21577,19 +21588,9 @@ InstructionCost BoUpSLP::getTreeCost(InstructionCost TreeCost,
                 VectorCasts
                     .insert(std::make_pair(ScalarTE, FTy->getElementType()))
                     .second) {
-              unsigned BWSz = It->second.first;
-              unsigned DstBWSz = DL->getTypeSizeInBits(FTy->getElementType());
-              unsigned VecOpcode;
-              if (DstBWSz < BWSz)
-                VecOpcode = Instruction::Trunc;
-              else
-                VecOpcode =
-                    It->second.second ? Instruction::SExt : Instruction::ZExt;
-              InstructionCost C = TTI->getCastInstrCost(
-                  VecOpcode, FTy,
-                  getWidenedType(IntegerType::get(FTy->getContext(), BWSz),
-                                 FTy->getNumElements()),
-                  getCastContextHint(*ScalarTE), CostKind);
+              InstructionCost C = getDemotedTypeCastCost(
+                  *TTI, FTy, It->second, getCastContextHint(*ScalarTE),
+                  CostKind);
               LLVM_DEBUG(dbgs() << "SLP: Adding cost " << C
                                 << " for extending externally used vector with "
                                    "non-equal minimum bitwidth.\n");
@@ -21915,113 +21916,16 @@ InstructionCost BoUpSLP::getTreeCost(InstructionCost TreeCost,
     return InstructionCost::getInvalid();
 
   Cost += ExtractCost;
-  auto &&ResizeToVF = [this, &Cost](const TreeEntry *TE, ArrayRef<int> Mask,
-                                    bool ForSingleMask) {
-    InstructionCost C = 0;
-    unsigned VF = Mask.size();
-    unsigned VecVF = TE->getVectorFactor();
-    bool HasLargeIndex =
-        any_of(Mask, [VF](int Idx) { return Idx >= static_cast<int>(VF); });
-    if ((VF != VecVF && HasLargeIndex) ||
-        !ShuffleVectorInst::isIdentityMask(Mask, VF)) {
-
-      if (HasLargeIndex) {
-        SmallVector<int> OrigMask(VecVF, PoisonMaskElem);
-        std::copy(Mask.begin(), std::next(Mask.begin(), std::min(VF, VecVF)),
-                  OrigMask.begin());
-        C = getShuffleCost(
-            *TTI, TTI::SK_PermuteSingleSrc,
-            cast<VectorType>(getWidenedType(TE->getMainOp()->getType(), VecVF)),
-            CostKind, OrigMask);
-        LLVM_DEBUG(
-            dbgs() << "SLP: Adding cost " << C
-                   << " for final shuffle of insertelement external users.\n";
-            TE->dump(); dbgs() << "SLP: Current total cost = " << Cost << "\n");
-        Cost += C;
-        return std::make_pair(TE, true);
-      }
-
-      if (!ForSingleMask) {
-        SmallVector<int> ResizeMask(VF, PoisonMaskElem);
-        for (unsigned I = 0; I < VF; ++I) {
-          if (Mask[I] != PoisonMaskElem)
-            ResizeMask[Mask[I]] = Mask[I];
-        }
-        if (!ShuffleVectorInst::isIdentityMask(ResizeMask, VF))
-          C = getShuffleCost(*TTI, TTI::SK_PermuteSingleSrc,
-                             cast<VectorType>(getWidenedType(
-                                 TE->getMainOp()->getType(), VecVF)),
-                             CostKind, ResizeMask);
-        LLVM_DEBUG(
-            dbgs() << "SLP: Adding cost " << C
-                   << " for final shuffle of insertelement external users.\n";
-            TE->dump(); dbgs() << "SLP: Current total cost = " << Cost << "\n");
-
-        Cost += C;
-      }
-    }
-    return std::make_pair(TE, false);
-  };
   // Calculate the cost of the reshuffled vectors, if any.
   for (int I = 0, E = ShuffledInserts.size(); I < E; ++I) {
+    auto *VecTy = cast<FixedVectorType>(
+        ShuffledInserts[I].InsertElements.front()->getType());
     Value *Base = ShuffledInserts[I].InsertElements.front()->getOperand(0);
     auto Vector = ShuffledInserts[I].ValueMasks.takeVector();
-    unsigned VF = 0;
-    auto EstimateShufflesCost = [&](ArrayRef<int> Mask,
-                                    ArrayRef<const TreeEntry *> TEs) {
-      assert((TEs.size() == 1 || TEs.size() == 2) &&
-             "Expected exactly 1 or 2 tree entries.");
-      if (TEs.size() == 1) {
-        if (VF == 0)
-          VF = TEs.front()->getVectorFactor();
-        auto *FTy = getWidenedType(TEs.back()->Scalars.front()->getType(), VF);
-        if (!ShuffleVectorInst::isIdentityMask(Mask, VF) &&
-            !all_of(enumerate(Mask), [=](const auto &Data) {
-              return Data.value() == PoisonMaskElem ||
-                     (Data.index() < VF &&
-                      static_cast<int>(Data.index()) == Data.value());
-            })) {
-          InstructionCost C =
-              getShuffleCost(*TTI, TTI::SK_PermuteSingleSrc,
-                             cast<VectorType>(FTy), CostKind, Mask);
-          C = ScaleCost(C, *TEs.front());
-          LLVM_DEBUG(dbgs() << "SLP: Adding cost " << C
-                            << " for final shuffle of insertelement "
-                               "external users.\n";
-                     TEs.front()->dump();
-                     dbgs() << "SLP: Current total cost = " << Cost << "\n");
-          Cost += C;
-        }
-      } else {
-        if (VF == 0) {
-          if (TEs.front() &&
-              TEs.front()->getVectorFactor() == TEs.back()->getVectorFactor())
-            VF = TEs.front()->getVectorFactor();
-          else
-            VF = Mask.size();
-        }
-        auto *FTy = getWidenedType(TEs.back()->Scalars.front()->getType(), VF);
-        InstructionCost C = getShuffleCost(
-            *TTI, TTI::SK_PermuteTwoSrc, cast<VectorType>(FTy), CostKind, Mask);
-        C = ScaleCost(C, *TEs.back());
-        LLVM_DEBUG(dbgs() << "SLP: Adding cost " << C
-                          << " for final shuffle of vector node and external "
-                             "insertelement users.\n";
-                   if (TEs.front()) { TEs.front()->dump(); } TEs.back()->dump();
-                   dbgs() << "SLP: Current total cost = " << Cost << "\n");
-        Cost += C;
-      }
-      VF = Mask.size();
-      return TEs.back();
-    };
-    (void)performExtractsShuffleAction<const TreeEntry>(
-        MutableArrayRef(Vector.data(), Vector.size()), Base,
-        [](const TreeEntry *E) { return E->getVectorFactor(); }, ResizeToVF,
-        EstimateShufflesCost);
+    Cost += getEntriesLanesShuffleCost(Vector, Base, VecTy->getElementType(),
+                                       ScaleCost);
     InstructionCost InsertCost = TTI->getScalarizationOverhead(
-        cast<FixedVectorType>(
-            ShuffledInserts[I].InsertElements.front()->getType()),
-        DemandedElts[I],
+        VecTy, DemandedElts[I],
         /*Insert*/ true, /*Extract*/ false, CostKind);
     Cost -= InsertCost;
   }
@@ -23108,6 +23012,108 @@ BoUpSLP::isGatherShuffledEntry(
     return {};
   }
   return Res;
+}
+
+InstructionCost BoUpSLP::getEntriesLanesShuffleCost(
+    MutableArrayRef<std::pair<const TreeEntry *, SmallVector<int>>> ValueMasks,
+    Value *Base, Type *ScalarTy,
+    function_ref<InstructionCost(InstructionCost, const TreeEntry &)> ScaleCost)
+    const {
+  InstructionCost Cost = 0;
+  auto ResizeToVF = [&](const TreeEntry *TE, ArrayRef<int> Mask,
+                        bool ForSingleMask) {
+    InstructionCost C = 0;
+    unsigned VF = Mask.size();
+    unsigned VecVF = TE->getVectorFactor();
+    bool HasLargeIndex =
+        any_of(Mask, [VF](int Idx) { return Idx >= static_cast<int>(VF); });
+    if ((VF != VecVF && HasLargeIndex) ||
+        !ShuffleVectorInst::isIdentityMask(Mask, VF)) {
+
+      if (HasLargeIndex) {
+        SmallVector<int> OrigMask(VecVF, PoisonMaskElem);
+        std::copy(Mask.begin(), std::next(Mask.begin(), std::min(VF, VecVF)),
+                  OrigMask.begin());
+        C = getShuffleCost(*TTI, TTI::SK_PermuteSingleSrc,
+                           cast<VectorType>(getWidenedType(ScalarTy, VecVF)),
+                           CostKind, OrigMask);
+        LLVM_DEBUG(dbgs() << "SLP: Adding cost " << C
+                          << " for resizing the lanes of the vectorized "
+                             "entry.\n";
+                   TE->dump());
+        Cost += C;
+        return std::make_pair(TE, true);
+      }
+
+      if (!ForSingleMask) {
+        SmallVector<int> ResizeMask(VF, PoisonMaskElem);
+        for (unsigned I = 0; I < VF; ++I) {
+          if (Mask[I] != PoisonMaskElem)
+            ResizeMask[Mask[I]] = Mask[I];
+        }
+        if (!ShuffleVectorInst::isIdentityMask(ResizeMask, VF))
+          C = getShuffleCost(*TTI, TTI::SK_PermuteSingleSrc,
+                             cast<VectorType>(getWidenedType(ScalarTy, VecVF)),
+                             CostKind, ResizeMask);
+        LLVM_DEBUG(dbgs() << "SLP: Adding cost " << C
+                          << " for resizing the lanes of the vectorized "
+                             "entry.\n";
+                   TE->dump());
+        Cost += C;
+      }
+    }
+    return std::make_pair(TE, false);
+  };
+  unsigned VF = 0;
+  auto EstimateShufflesCost = [&](ArrayRef<int> Mask,
+                                  ArrayRef<const TreeEntry *> TEs) {
+    assert((TEs.size() == 1 || TEs.size() == 2) &&
+           "Expected exactly 1 or 2 tree entries.");
+    if (TEs.size() == 1) {
+      if (VF == 0)
+        VF = TEs.front()->getVectorFactor();
+      auto *FTy = getWidenedType(ScalarTy, VF);
+      if (!ShuffleVectorInst::isIdentityMask(Mask, VF) &&
+          !all_of(enumerate(Mask), [=](const auto &Data) {
+            return Data.value() == PoisonMaskElem ||
+                   (Data.index() < VF &&
+                    static_cast<int>(Data.index()) == Data.value());
+          })) {
+        InstructionCost C =
+            getShuffleCost(*TTI, TTI::SK_PermuteSingleSrc,
+                           cast<VectorType>(FTy), CostKind, Mask);
+        C = ScaleCost(C, *TEs.front());
+        LLVM_DEBUG(dbgs() << "SLP: Adding cost " << C
+                          << " for the shuffle of the lanes of the vectorized "
+                             "entry.\n";
+                   TEs.front()->dump());
+        Cost += C;
+      }
+    } else {
+      if (VF == 0) {
+        if (TEs.front() &&
+            TEs.front()->getVectorFactor() == TEs.back()->getVectorFactor())
+          VF = TEs.front()->getVectorFactor();
+        else
+          VF = Mask.size();
+      }
+      auto *FTy = getWidenedType(ScalarTy, VF);
+      InstructionCost C = getShuffleCost(*TTI, TTI::SK_PermuteTwoSrc,
+                                         cast<VectorType>(FTy), CostKind, Mask);
+      C = ScaleCost(C, *TEs.back());
+      LLVM_DEBUG(dbgs() << "SLP: Adding cost " << C
+                        << " for the shuffle of the lanes of the vectorized "
+                           "entries.\n";
+                 if (TEs.front()) { TEs.front()->dump(); } TEs.back()->dump());
+      Cost += C;
+    }
+    VF = Mask.size();
+    return TEs.back();
+  };
+  (void)performExtractsShuffleAction<const TreeEntry>(
+      ValueMasks, Base, [](const TreeEntry *E) { return E->getVectorFactor(); },
+      ResizeToVF, EstimateShufflesCost);
+  return Cost;
 }
 
 InstructionCost BoUpSLP::getGatherCost(ArrayRef<Value *> VL, bool ForPoisonSrc,
@@ -30188,19 +30194,14 @@ bool BoUpSLP::collectValuesToDemote(
   if (NodesToKeepBWs.contains(E.Idx))
     return false;
 
-  // If the value is not a vectorized instruction in the expression and not used
-  // by the insertelement instruction and not used in multiple vector nodes, it
-  // cannot be demoted.
   bool IsSignedNode = any_of(E.Scalars, [&](Value *R) {
     if (isa<PoisonValue>(R))
       return false;
     return !isKnownNonNegative(R, SimplifyQuery(*DL));
   });
-  auto IsPotentiallyTruncated = [&](Value *V, unsigned &BitWidth) -> bool {
+  auto UpdateBitWidth = [&](Value *V, unsigned &BitWidth) -> bool {
     if (isa<PoisonValue>(V))
       return true;
-    if (getTreeEntries(V).size() > 1)
-      return false;
     // For lat shuffle of sext/zext with many uses need to check the extra bit
     // for unsigned values, otherwise may have incorrect casting for reused
     // scalars.
@@ -30228,6 +30229,13 @@ bool BoUpSLP::collectValuesToDemote(
     }
     BitWidth = std::max(BitWidth, BitWidth1);
     return BitWidth > 0 && OrigBitWidth >= (BitWidth * 2);
+  };
+  // If the value is not a vectorized instruction in the expression and not used
+  // by the insertelement instruction and not used in multiple vector nodes, it
+  // cannot be demoted.
+  auto IsPotentiallyTruncated = [&](Value *V, unsigned &BitWidth) -> bool {
+    return isa<PoisonValue>(V) ||
+           (getTreeEntries(V).size() <= 1 && UpdateBitWidth(V, BitWidth));
   };
   auto FinalAnalysis = [&]() {
     if (!IsProfitableToDemote)
@@ -30336,8 +30344,10 @@ bool BoUpSLP::collectValuesToDemote(
         if (Operands.empty()) {
           if (!IsTruncRoot)
             MaxDepthLevel = 1;
+          // The scalars, shared with other nodes, need the bits demanded by all
+          // their users, since the gathers may reuse this node for them.
           for (Value *V : E.Scalars)
-            (void)IsPotentiallyTruncated(V, BitWidth);
+            (void)UpdateBitWidth(V, BitWidth);
         } else {
           // Several vectorized uses? Check if we can truncate it, otherwise -
           // exit.
@@ -30837,6 +30847,8 @@ void BoUpSLP::computeMinimumValueSizes() {
       return 0u;
     // Round MaxBitWidth up to the next power-of-two.
     MaxBitWidth = bit_ceil(MaxBitWidth);
+    if (MaxBitWidth < 8 && MaxBitWidth > 1)
+      MaxBitWidth = 8;
 
     return MaxBitWidth;
   };
@@ -30909,8 +30921,10 @@ void BoUpSLP::computeMinimumValueSizes() {
     auto IsDemotedUser = [&](const Instruction *UI) {
       return isVectorized(UI) &&
              all_of(getTreeEntries(UI), [&](const TreeEntry *TE) {
-               return Candidate.MinBWs.contains(TE) ||
-                      is_contained(ToDemote, TE->Idx);
+               // The user in a wider type extends the scalar back.
+               if (uint64_t BW = Candidate.MinBWs.lookup(TE).first)
+                 return BW <= MaxBitWidth;
+               return is_contained(ToDemote, TE->Idx);
              });
     };
     // The extension, demoted below its source width, becomes a truncation of
@@ -30940,16 +30954,23 @@ void BoUpSLP::computeMinimumValueSizes() {
       erase_if(ToDemote,
                [&](unsigned Idx) { return is_contained(WideExts, Idx); });
     }
+    auto IsSignedEntry = [&](const TreeEntry &TE) {
+      return any_of(TE.Scalars, [&](Value *R) {
+        if (isa<PoisonValue>(R))
+          return false;
+        return !isKnownNonNegative(R, SimplifyQuery(*DL));
+      });
+    };
     // The extension of a demoted scalar, which does not fit into the demoted
     // type, restores only its demanded bits. Keep the original bitwidth if the
     // users, not demoted with the scalar, may depend on the other bits via
     // poison-generating annotations or there are too many users to check.
-    auto HasUnsafeScalarUsers = [&](Value *V) {
+    auto HasUnsafeScalarUsers = [&](Value *V, bool IsSigned) {
       auto *I = dyn_cast<Instruction>(V);
       if (!I)
         return false;
       unsigned NumBits =
-          isKnownNonNegative(I, SimplifyQuery(*DL))
+          !IsSigned
               ? computeKnownBits(I, *DL, AC, nullptr, DT).countMaxActiveBits()
               : ComputeMaxSignificantBits(I, *DL, AC, nullptr, DT);
       if (NumBits <= MaxBitWidth)
@@ -30977,7 +30998,8 @@ void BoUpSLP::computeMinimumValueSizes() {
     if (MaxBitWidth != 0 && any_of(ToDemote, [&](unsigned Idx) {
           const TreeEntry &TE = *Candidate.VectorizableTree[Idx];
           return !TE.isGather() && !Candidate.MinBWs.contains(&TE) &&
-                 any_of(TE.Scalars, HasUnsafeScalarUsers);
+                 any_of(TE.Scalars,
+                        std::bind(HasUnsafeScalarUsers, _1, IsSignedEntry(TE)));
         }))
       MaxBitWidth = 0;
     if (Candidate.ReductionBitWidth != 0 &&
@@ -31064,12 +31086,7 @@ void BoUpSLP::computeMinimumValueSizes() {
       TreeEntry *TE = Candidate.VectorizableTree[Idx].get();
       if (Candidate.MinBWs.contains(TE))
         continue;
-      bool IsSigned = any_of(TE->Scalars, [&](Value *R) {
-        if (isa<PoisonValue>(R))
-          return false;
-        return !isKnownNonNegative(R, SimplifyQuery(*DL));
-      });
-      Candidate.MinBWs.try_emplace(TE, MaxBitWidth, IsSigned);
+      Candidate.MinBWs.try_emplace(TE, MaxBitWidth, IsSignedEntry(*TE));
     }
   }
 }
@@ -36266,6 +36283,8 @@ private:
         case RecurKind::FindLast:
         case RecurKind::FMaxNum:
         case RecurKind::FMinNum:
+        case RecurKind::FMaxSelectNoFMF:
+        case RecurKind::FMinSelectNoFMF:
         case RecurKind::FMaximumNum:
         case RecurKind::FMinimumNum:
         case RecurKind::None:
@@ -36483,6 +36502,8 @@ private:
     case RecurKind::FindLast:
     case RecurKind::FMaxNum:
     case RecurKind::FMinNum:
+    case RecurKind::FMaxSelectNoFMF:
+    case RecurKind::FMinSelectNoFMF:
     case RecurKind::FMaximumNum:
     case RecurKind::FMinimumNum:
     case RecurKind::None:
@@ -36593,6 +36614,8 @@ private:
     case RecurKind::FindLast:
     case RecurKind::FMaxNum:
     case RecurKind::FMinNum:
+    case RecurKind::FMaxSelectNoFMF:
+    case RecurKind::FMinSelectNoFMF:
     case RecurKind::FMaximumNum:
     case RecurKind::FMinimumNum:
     case RecurKind::None:

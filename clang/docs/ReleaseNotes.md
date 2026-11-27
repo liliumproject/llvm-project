@@ -1383,6 +1383,10 @@ documentation](CIR/index.md) for more information regarding ClangIR's status and
 
 #### Miscellaneous Clang Crashes Fixed
 
+- Fixed a crash during code generation when builtin templates such as
+  `__type_pack_element` or `__make_integer_seq` were used as template
+  template arguments of emitted entities. (#GH232739)
+
 - Fixed a crash in preprocessor conditionals containing `_Pragma`.
 - Fixed a crash when Microsoft extensions were enabled and an unterminated
   `__identifier` expression reached the end of a preprocessing directive or
@@ -1540,6 +1544,9 @@ documentation](CIR/index.md) for more information regarding ClangIR's status and
   longer searched.
 
 #### RISC-V Support
+
+- Added CodeGen support for the ACLIC v0.20 `preemptible` and `push-pop`
+  interrupt attribute kinds.
 
 - Fixed a bug where the `interrupt` attribute did not accept `machine` together
   with both `SiFive-CLIC-preemptible` and `SiFive-CLIC-stack-swap`.
@@ -1793,6 +1800,8 @@ The `alpha.cplusplus.UseAfterLifetimeEnd` checker was renamed to `alpha.core.Use
   this release.
 - Added parsing and semantic support for `dims` modifier in `num_teams`,
   `thread_limit` and `num_threads` clauses for OpenMP 6.1 or later.
+- Array shaping expressions can now be the base of array sections in the `to`
+  and `from` clauses of `target update`. (#GH136294)
 - Map-type-modifying modifiers applied to a list item with a user-defined mapper
   are now propagated onto the maps the mapper expands to.
 - Mapping of expressions with base-pointers through a user-defined mapper (e.g.
