@@ -2017,8 +2017,7 @@ Instruction *InstCombinerImpl::foldOpIntoPhi(Instruction &I, PHINode *PN,
   bool IdenticalUsers = false;
   if (!AllowMultipleUses && !OneUse) {
     // Walk the use list for the instruction, comparing them to I.
-    for (User *U : PN->users()) {
-      Instruction *UI = cast<Instruction>(U);
+    for (Instruction *UI : PN->users()) {
       if (UI != &I && !I.isIdenticalTo(UI))
         return nullptr;
     }
@@ -2154,8 +2153,7 @@ Instruction *InstCombinerImpl::foldOpIntoPhi(Instruction &I, PHINode *PN,
   if (IdenticalUsers) {
     // Collect and deduplicate users up-front to avoid iterator invalidation.
     SmallSetVector<Instruction *, 4> ToReplace;
-    for (User *U : PN->users()) {
-      Instruction *User = cast<Instruction>(U);
+    for (Instruction *User : PN->users()) {
       if (User == &I)
         continue;
       ToReplace.insert(User);
@@ -3723,14 +3721,13 @@ Instruction *InstCombinerImpl::visitGetElementPtrInst(GetElementPtrInst &GEP) {
   return nullptr;
 }
 
-static bool isNeverEqualToUnescapedAlloc(Value *V, const TargetLibraryInfo &TLI,
-                                         Instruction *AI) {
+static bool isNeverEqualToUnescapedAlloc(Value *V, Instruction *AI) {
   if (isa<ConstantPointerNull>(V))
     return true;
   if (auto *LI = dyn_cast<LoadInst>(V))
     return isa<GlobalVariable>(LI->getPointerOperand());
   // Two distinct allocations will never be equal.
-  return isAllocLikeFn(V, &TLI) && V != AI;
+  return isAllocLikeFn(V) && V != AI;
 }
 
 /// Given a call CB which uses an address UsedV, return true if we can prove the
@@ -3760,14 +3757,13 @@ isAllocSiteRemovable(Instruction *AI, SmallVectorImpl<Instruction *> &Users,
                      const TargetLibraryInfo &TLI, bool KnowInit,
                      unsigned MaxUsers) {
   SmallVector<Instruction*, 4> Worklist;
-  const std::optional<StringRef> Family = getAllocationFamily(AI, &TLI);
+  const std::optional<StringRef> Family = getAllocationFamily(AI);
   Worklist.push_back(AI);
   ModRefInfo Access = KnowInit ? ModRefInfo::NoModRef : ModRefInfo::Mod;
 
   do {
     Instruction *PI = Worklist.pop_back_val();
-    for (User *U : PI->users()) {
-      Instruction *I = cast<Instruction>(U);
+    for (Instruction *I : PI->users()) {
       if (Users.size() >= MaxUsers)
         return std::nullopt;
       switch (I->getOpcode()) {
@@ -3790,7 +3786,7 @@ isAllocSiteRemovable(Instruction *AI, SmallVectorImpl<Instruction *> &Users,
         if (!ICI->isEquality())
           return std::nullopt;
         unsigned OtherIndex = (ICI->getOperand(0) == PI) ? 1 : 0;
-        if (!isNeverEqualToUnescapedAlloc(ICI->getOperand(OtherIndex), TLI, AI))
+        if (!isNeverEqualToUnescapedAlloc(ICI->getOperand(OtherIndex), AI))
           return std::nullopt;
 
         // Do not fold compares to aligned_alloc calls, as they may have to
@@ -3853,13 +3849,13 @@ isAllocSiteRemovable(Instruction *AI, SmallVectorImpl<Instruction *> &Users,
         }
 
         if (Family && getFreedOperand(cast<CallBase>(I)) == PI &&
-            getAllocationFamily(I, &TLI) == Family) {
+            getAllocationFamily(I) == Family) {
           Users.emplace_back(I);
           continue;
         }
 
         if (Family && getReallocatedOperand(cast<CallBase>(I)) == PI &&
-            getAllocationFamily(I, &TLI) == Family) {
+            getAllocationFamily(I) == Family) {
           Users.emplace_back(I);
           Worklist.push_back(I);
           continue;
@@ -3905,7 +3901,7 @@ isAllocSiteRemovable(Instruction *AI, SmallVectorImpl<Instruction *> &Users,
 }
 
 Instruction *InstCombinerImpl::visitAllocSite(Instruction &MI) {
-  assert(isa<AllocaInst>(MI) || isRemovableAlloc(&cast<CallBase>(MI), &TLI));
+  assert(isa<AllocaInst>(MI) || isRemovableAlloc(&cast<CallBase>(MI)));
 
   // If we have a malloc call which is only used in any amount of comparisons to
   // null and free calls, delete the calls and replace the comparisons with true

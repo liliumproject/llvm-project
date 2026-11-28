@@ -390,6 +390,14 @@ MipsSETargetLowering::MipsSETargetLowering(const MipsTargetMachine &TM,
     setOperationAction(ISD::FMUL, MVT::f32, Custom);
     setOperationAction(ISD::FDIV, MVT::f32, Custom);
     setOperationAction(ISD::FSQRT, MVT::f32, Custom);
+
+    // The FPU has no NaN or infinity and always rounds toward zero. The
+    // constrained operations must follow the IEEE rules and the current
+    // rounding mode, so always use libcalls for them, even with fast-math
+    // flags.
+    for (auto Op : {ISD::STRICT_FADD, ISD::STRICT_FSUB, ISD::STRICT_FMUL,
+                    ISD::STRICT_FDIV, ISD::STRICT_FSQRT})
+      setOperationAction(Op, MVT::f32, LibCall);
   }
 
   computeRegisterProperties(Subtarget.getRegisterInfo());
@@ -626,10 +634,8 @@ SDValue MipsSETargetLowering::LowerOperation(SDValue Op,
   case ISD::VECTOR_SHUFFLE:
     return lowerVECTOR_SHUFFLE(Op, DAG);
   case ISD::FP16_TO_FP:
-  case ISD::STRICT_FP16_TO_FP:
     return lowerFP16_TO_FP(Op, DAG);
   case ISD::FP_TO_FP16:
-  case ISD::STRICT_FP_TO_FP16:
     return lowerFP_TO_FP16(Op, DAG);
   case ISD::BITCAST:            return lowerBITCAST(Op, DAG);
   case ISD::FADD:
